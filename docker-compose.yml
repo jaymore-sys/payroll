@@ -1,0 +1,17 @@
+# Local development database. Production: managed PostgreSQL 16 in an India region (AWS ap-south-1 / Supabase Mumbai).
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: payroll
+      POSTGRES_PASSWORD: payroll
+      POSTGRES_DB: payrollpro
+    ports: ["127.0.0.1:5432:5432"]   # bound to localhost only
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payroll"]
+      interval: 5s
+      retries: 10
+volumes:
+  pgdata:

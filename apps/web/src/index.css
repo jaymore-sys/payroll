@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 246 247 251; --surface: 255 255 255; --surface-2: 241 243 249; --line: 226 230 240;
+  --ink: 17 24 39; --muted: 100 109 130;
+  --brand: 79 70 229; --brand-soft: 238 240 255; --brand-ink: 67 56 202;
+  --ok: 16 185 129; --warn: 245 158 11; --bad: 239 68 68; --info: 14 165 233;
+  color-scheme: light;
+}
+.dark {
+  --bg: 10 13 24; --surface: 19 23 38; --surface-2: 27 32 51; --line: 41 47 71;
+  --ink: 236 239 248; --muted: 148 156 182;
+  --brand: 129 120 255; --brand-soft: 37 36 76; --brand-ink: 165 158 255;
+  --ok: 52 211 153; --warn: 251 191 36; --bad: 248 113 113; --info: 56 189 248;
+  color-scheme: dark;
+}
+
+@layer base {
+  html { -webkit-tap-highlight-color: transparent; }
+  body { @apply bg-bg text-ink font-sans antialiased; text-rendering: optimizeLegibility; }
+  ::selection { background: rgb(var(--brand) / 0.25); }
+  *:focus-visible { @apply outline-none ring-2 ring-brand/60 ring-offset-2 ring-offset-bg; }
+  input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; }
+}
+
+@layer components {
+  .card { @apply rounded-2xl border border-line bg-surface shadow-card; }
+  .input {
+    @apply w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm text-ink placeholder:text-muted/70
+      transition-all duration-200 hover:border-brand/40 focus:border-brand focus:ring-4 focus:ring-brand/15 focus:outline-none disabled:opacity-60;
+  }
+  .label { @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted; }
+  .gradient-brand { background-image: linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #db2777 100%); }
+  .text-gradient { @apply bg-clip-text text-transparent; background-image: linear-gradient(90deg, rgb(var(--brand)), #a855f7 60%, #ec4899); }
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { @apply rounded-full bg-line; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
