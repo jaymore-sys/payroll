@@ -14,7 +14,8 @@
     "typecheck": "tsc -p packages/engines && tsc -p apps/api && tsc -p apps/web",
     "build": "npm run build -w @payrollpro/web",
     "db:migrate": "npm run db:migrate -w @payrollpro/api",
-    "db:seed": "npm run db:seed -w @payrollpro/api"
+    "db:seed": "npm run db:seed -w @payrollpro/api",
+    "fresh": "npm run fresh -w @payrollpro/api --"
   },
   "engines": {
     "node": ">=20"

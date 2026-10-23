@@ -10,7 +10,8 @@
     "db:seed": "tsx src/db/seed.ts",
     "test": "vitest run --no-file-parallelism",
     "typecheck": "tsc -p .",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "fresh": "tsx src/db/fresh.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.2.17",
