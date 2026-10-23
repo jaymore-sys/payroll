@@ -41,8 +41,7 @@ function totalsRow(ws: ExcelJS.Worksheet, rowNo: number, firstData: number, last
 export async function buildSalaryWorkbook(o: { company: string; month: string; label: string; status: string; rows: SheetRow[] }) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'PayrollPro'; wb.created = new Date();
-  const draft = o.status !== 'FINALISED' ? ' — DRAFT (not finalised)' : '';
-  const sub = `${o.company} · Salary for ${o.label}${draft}`;
+  const sub = `${o.company} · Salary for ${o.label}`;
 
   // Component columns are the union across employees (templates can differ).
   const sm = wb.addWorksheet('Summary'); // first tab; filled in at the end
@@ -143,7 +142,6 @@ export async function buildSalaryWorkbook(o: { company: string; month: string; l
     ['Gross earnings', sum((p) => p.gross)], ['Total deductions', sum((p) => p.deductions.total)],
     ['Net pay (all)', sum((p) => p.net)], ['Net pay in bank file', payable.reduce((a, r) => a + r.payslip.net, 0)],
     ['Employer contributions', sum((p) => p.employer.total)], ['Total cost to company', sum((p) => p.gross + p.employer.total)],
-    ['Status', o.status === 'FINALISED' ? 'Finalised' : 'DRAFT — not finalised'],
     ['Employees with assumed YTD for TDS', o.rows.filter((r) => r.payslip.tax.assumedEarlierMonths).length], ['Generated', new Date().toLocaleString('en-IN')],
   ];
   S.forEach(([k, v], i) => {

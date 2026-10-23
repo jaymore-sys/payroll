@@ -52,7 +52,7 @@ function build(gross: Decimal, i: CtcInput, tpl: ComponentDef[], rules: Statutor
   // 50% wage rule: if excluded components exceed half of remuneration, the excess is deemed wages.
   const deemed = rupee(max(0, gross.minus(wages).minus(gross.times(0.5))));
   const effWages = wages.plus(i.labourCodeMode === false ? 0 : deemed);
-  const month = i.asOf ?? '2026-04';
+  const month = i.asOf ?? new Date().toISOString().slice(0, 7);
   const stat = computeStatutory(
     { gender: i.gender ?? 'M', state: i.state, age: i.age ?? 30, doj: i.doj ?? `${month}-01`, pfCapMode: i.pfCapMode },
     { month, pfWage: n(effWages), esiGross: n(gross), grossMonthly: n(gross), payableDays: 30, wages: n(effWages) },

@@ -42,13 +42,13 @@ Set `DATABASE_URL` (see `apps/api/.env.example`), then `npm run db:migrate && np
 | Area | Status |
 |---|---|
 | **Engines** | Tax both regimes (87A + marginal relief, surcharge + marginal relief, cess, ₹10 rounding, monthly TDS, no-PAN), PF/EPS/EDLI/admin, ESI with contribution periods, state PT (MH, KA seeded), LWF, gratuity, statutory bonus, CTC split with iterative gross solve and 50% wage rule, leave proration/accrual/sandwich/half-day/year-end/encashment |
-| **Rules** | Dated `statutory_rule` and `tax_rule` tables, seeded from the engine defaults — a law change is a new row |
+| **Rules** | Dated `statutory_rule` and `tax_rule` tables, refreshed from the engine on every start — a law change is a new row. PF wage ceiling ₹25,000 (max ₹3,000) from October 2026 wages (S.O. 5109(E), 17 Sep 2026) |
 | **Auth & security** | See below |
 | **Company setup** | Company, pay settings, legal entities, branches (state → PT/LWF), departments, designations, holidays |
 | **Employees** | List/search/filter, 3-step add wizard, CSV bulk import with dry-run validation report, profile, masked PII with audited reveal, edit (Payroll Manager limited to pay fields), exit, change requests (employee → HR approval), audit history |
 | **Salary** | CTC builder, live preview, revisions with effective dates and history |
 | **Attendance** | Leave is applied in your separate leave software. Managers record each team member's month (present, paid leave, LOP, overtime) or HR uploads the month's sheet (.xlsx round-trip). Working days exclude weekly offs and holidays. Locked once payroll is finalised. Payroll takes LOP from here |
-| **Payroll run** | Monthly run per spec §10: everyone with a salary structure, editable LOP / bonus / other earnings / deductions / hold, LOP from manager-entered attendance, joiner/leaver proration, PF/ESI/PT/LWF, TDS with full-year projection and YTD (one-time bonus taxed in the month), net-pay floor, variance vs last month, checklist, Company Admin finalise (two-person rule optional), payslips published to employees |
+| **Payroll run** | Monthly run per spec §10: everyone with a salary structure, editable LOP / bonus / other earnings / deductions / hold, LOP from manager-entered attendance, joiner/leaver proration, PF/ESI/PT/LWF, TDS with full-year projection and YTD (one-time bonus taxed in the month), net-pay floor, variance vs last month, checklist; payslips visible to employees as soon as salaries are calculated |
 | **Salary Excel** | `Download Excel` on a run: Summary, Salary register (every component, deduction and employer cost), Bank transfer (full account numbers for net-banking upload, held salaries excluded), Statutory dues (PF A/c 1/2/10/21, ESI, PT by state, LWF, TDS). Audited on every download |
 | **Tax** | Regime comparison calculator with line-by-line worksheet |
 | **Dashboard** | Role-aware: KPIs, headcount trend, cost by department, reminders (attendance pending, payroll status, missing PAN/bank), statutory due dates, holidays, recent activity; manager view with team attendance progress; employee view with salary and latest payslip |

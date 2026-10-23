@@ -1,5 +1,5 @@
 import { compareRegimes } from '@payrollpro/engines';
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, or, sql, type SQL } from 'drizzle-orm';
 import { Router } from 'express';
 import { z } from 'zod';
 import { db, schema } from '../db';
@@ -91,7 +91,7 @@ miscRouter.get('/dashboard', h(async (req, res) => {
     const [me] = await db.select({ firstName: E.firstName, lastName: E.lastName, code: E.code, doj: E.doj, taxRegime: E.taxRegime }).from(E).where(eq(E.id, u.eid));
     const [slip] = await db.select({ id: schema.payslips.id, month: schema.payslips.month, gross: schema.payslips.gross, net: schema.payslips.net, tds: schema.payslips.tds, deductions: schema.payslips.totalDeductions })
       .from(schema.payslips).innerJoin(schema.payrollRuns, eq(schema.payrollRuns.id, schema.payslips.runId))
-      .where(and(eq(schema.payslips.employeeId, u.eid), eq(schema.payrollRuns.status, 'FINALISED'))).orderBy(desc(schema.payslips.month)).limit(1);
+      .where(and(eq(schema.payslips.employeeId, u.eid), ne(schema.payrollRuns.status, 'DRAFT'))).orderBy(desc(schema.payslips.month)).limit(1);
     out.me = { ...me, salary: s ? { annualCtc: Number(s.annualCtc), breakup: s.breakup, effectiveFrom: s.effectiveFrom } : null, latestPayslip: slip ?? null };
   }
   res.json(out);

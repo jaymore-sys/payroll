@@ -32,7 +32,7 @@ export default function CtcBuilder() {
               <Field label="Work state"><Select value={state} onChange={(e) => setState(e.target.value)}>{STATES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</Select></Field>
               <Field label="Gender"><Select value={gender} onChange={(e) => setGender(e.target.value as 'M' | 'F')}><option value="M">Male</option><option value="F">Female</option></Select></Field>
               <Field label="Age"><Input type="number" min={18} max={80} value={age} onChange={(e) => setAge(Number(e.target.value) || 30)} /></Field>
-              <Field label="PF wage"><Select value={cap} onChange={(e) => setCap(e.target.value as 'capped' | 'actual')}><option value="capped">Capped ₹15,000</option><option value="actual">Actual</option></Select></Field>
+              <Field label="PF wage"><Select value={cap} onChange={(e) => setCap(e.target.value as 'capped' | 'actual')}><option value="capped">Capped ₹25,000</option><option value="actual">Actual</option></Select></Field>
             </div>
             <Switch checked={metro} onChange={setMetro} label="Metro city (HRA 50% of basic)" />
           </div>

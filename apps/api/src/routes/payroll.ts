@@ -1,10 +1,9 @@
 import { computePayslip, daysInMonth, fyMonth, taxYearOf, type Payslip } from '@payrollpro/engines';
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { db, schema } from '../db';
 import { audit } from '../lib/audit';
-import { notifyUsersOfEmployees } from '../lib/access';
 import { hasRole, requireRole } from '../lib/auth';
 import { decryptJson } from '../lib/crypto';
 import { buildSalaryWorkbook } from '../lib/excel';
@@ -104,7 +103,7 @@ payrollRouter.get('/payroll-runs/:id', requireRole(...ADMIN), h(async (req, res)
     .where(eq(I.runId, run.id)).orderBy(asc(E.code));
 
   const prev = await db.select({ emp: P.employeeId, net: P.net }).from(P).innerJoin(R, eq(R.id, P.runId))
-    .where(and(eq(P.companyId, cid), eq(P.month, prevMonth(run.month)), eq(R.status, 'FINALISED')));
+    .where(and(eq(P.companyId, cid), eq(P.month, prevMonth(run.month)), ne(R.status, 'DRAFT')));
   const prevNet = new Map(prev.map((p) => [p.emp, Number(p.net)]));
   const { withoutSalary } = await eligible(cid, run.month);
   const { first, last } = monthBounds(run.month);
@@ -171,7 +170,7 @@ payrollRouter.post('/payroll-runs/:id/calculate', requireRole(...ADMIN), h(async
   // Year-to-date from finalised payslips earlier in this financial year (spec §7.3 step 1).
   const ytdRows = await db.select({ emp: P.employeeId, taxable: sql<number>`sum(${P.taxableGross})::float`, tds: sql<number>`sum(${P.tds})::float`, pf: sql<number>`sum(${P.pf})::float`, pt: sql<number>`sum(${P.pt})::float`, months: sql<number>`count(*)::int` })
     .from(P).innerJoin(R, eq(R.id, P.runId))
-    .where(and(eq(P.companyId, cid), eq(R.status, 'FINALISED'), gte(P.month, fyStart(run.month)), lt(P.month, run.month))).groupBy(P.employeeId);
+    .where(and(eq(P.companyId, cid), ne(R.status, 'DRAFT'), gte(P.month, fyStart(run.month)), lt(P.month, run.month))).groupBy(P.employeeId);
   const ytd = new Map(ytdRows.map((r) => [r.emp, r]));
 
   const slips: (typeof P.$inferInsert)[] = [];
@@ -215,20 +214,6 @@ payrollRouter.post('/payroll-runs/:id/calculate', requireRole(...ADMIN), h(async
   res.json({ totals, errors });
 }));
 
-/* ---------- finalise ---------- */
-payrollRouter.post('/payroll-runs/:id/finalise', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
-  const run = await loadRun(req);
-  if (run.status !== 'CALCULATED') throw new ApiError(409, 'not_calculated', run.status === 'FINALISED' ? 'Already finalised' : 'Calculate the run before finalising');
-  const [company] = await db.select({ two: schema.companies.twoPersonRule }).from(schema.companies).where(eq(schema.companies.id, req.user!.cid));
-  if (company.two && run.calculatedBy === req.user!.sub) throw new ApiError(403, 'two_person_rule', 'Two-person rule: someone else must finalise the run you calculated');
-  const [u] = await db.update(R).set({ status: 'FINALISED', finalisedAt: new Date(), finalisedBy: req.user!.sub }).where(and(eq(R.id, run.id), eq(R.status, 'CALCULATED'))).returning({ id: R.id });
-  if (!u) throw new ApiError(409, 'changed', 'The run changed; please reload');
-  const emps = (await db.select({ e: P.employeeId }).from(P).where(eq(P.runId, run.id))).map((x) => x.e);
-  await notifyUsersOfEmployees(req.user!.cid, emps, `Payslip for ${monthLabel(run.month)} is ready`, undefined, '/payslips');
-  await audit(req, 'finalise', 'payroll_run', run.id, { status: run.status }, { status: 'FINALISED', totals: run.totals });
-  res.json({ ok: true });
-}));
-
 /* ---------- Excel salary sheet ---------- */
 payrollRouter.get('/payroll-runs/:id/export.xlsx', requireRole(...ADMIN), h(async (req, res) => {
   const run = await loadRun(req);
@@ -253,7 +238,7 @@ payrollRouter.get('/payroll-runs/:id/export.xlsx', requireRole(...ADMIN), h(asyn
   await audit(req, 'export_salary_sheet', 'payroll_run', run.id, undefined, { month: run.month, rows: rows.length });
   res.set({
     'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'Content-Disposition': `attachment; filename="salary-${run.month}${run.status === 'FINALISED' ? '' : '-DRAFT'}.xlsx"`,
+    'Content-Disposition': `attachment; filename="salary-${run.month}.xlsx"`,
     'Cache-Control': 'no-store',
   });
   res.send(Buffer.from(await wb.xlsx.writeBuffer()));
@@ -266,14 +251,14 @@ payrollRouter.get('/payslips', h(async (req, res) => {
   if (eid !== req.user!.eid && !hasRole(req.user, ...ADMIN)) throw forbidden();
   const rows = await db.select({ id: P.id, month: P.month, gross: P.gross, net: P.net, tds: P.tds, deductions: P.totalDeductions, payableDays: P.payableDays })
     .from(P).innerJoin(R, eq(R.id, P.runId))
-    .where(and(eq(P.companyId, req.user!.cid), eq(P.employeeId, eid), eq(R.status, 'FINALISED'))).orderBy(desc(P.month));
+    .where(and(eq(P.companyId, req.user!.cid), eq(P.employeeId, eid), ne(R.status, 'DRAFT'))).orderBy(desc(P.month));
   res.json(rows.map((r) => ({ ...r, label: monthLabel(r.month), fyMonth: fyMonth(r.month) })));
 }));
 payrollRouter.get('/payslips/:id', h(async (req, res) => {
   const [p] = await db.select({ slip: P, status: R.status }).from(P).innerJoin(R, eq(R.id, P.runId)).where(and(eq(P.companyId, req.user!.cid), eq(P.id, req.params.id)));
   if (!p) throw notFound('Payslip');
   const admin = hasRole(req.user, ...ADMIN);
-  if (!admin && (p.slip.employeeId !== req.user!.eid || p.status !== 'FINALISED')) throw notFound('Payslip');
+  if (!admin && (p.slip.employeeId !== req.user!.eid || p.status === 'DRAFT')) throw notFound('Payslip');
   const [e] = await db.select({ code: E.code, firstName: E.firstName, lastName: E.lastName, panLast4: E.panLast4, uan: E.uan, bankLast4: E.bankLast4, doj: E.doj, designation: schema.designations.name, department: schema.departments.name })
     .from(E).leftJoin(schema.designations, eq(schema.designations.id, E.designationId)).leftJoin(schema.departments, eq(schema.departments.id, E.departmentId)).where(eq(E.id, p.slip.employeeId));
   const [c] = await db.select({ name: schema.companies.legalName, display: schema.companies.name, address: schema.companies.address }).from(schema.companies).where(eq(schema.companies.id, req.user!.cid));

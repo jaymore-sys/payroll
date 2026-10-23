@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Calculator, CalendarCheck2, Check, CircleAlert, Download, FileSpreadsheet, Lock, PauseCircle, Save, Search, Trash2, TrendingDown, TrendingUp, Users, Wallet } from 'lucide-react';
+import { ArrowLeft, Calculator, CalendarCheck2, CircleAlert, Download, FileSpreadsheet, PauseCircle, Save, Search, Trash2, TrendingDown, TrendingUp, Users, Wallet } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -13,25 +13,6 @@ import { useAct } from '../lib/hooks';
 import { monthLabel, runTone } from './Payroll';
 
 type Inputs = { lopDays: number; bonus: number; otherEarnings: number; otherDeductions: number; hold: boolean; note?: string | null };
-const STEPS = ['Inputs', 'Calculated', 'Finalised', 'Paid via bank'];
-
-function Stepper({ status }: { status: string }) {
-  const at = status === 'FINALISED' ? 2 : status === 'CALCULATED' ? 1 : 0;
-  return (
-    <div className="flex items-center gap-2">
-      {STEPS.map((s, i) => (
-        <div key={s} className="flex flex-1 items-center gap-2">
-          <motion.span initial={false} animate={{ scale: i === at ? 1.12 : 1 }} className={clsx('grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold', i < at || (i === at && at === 2) ? 'bg-ok text-white' : i === at ? 'gradient-brand text-white' : 'bg-surface-2 text-muted')}>
-            {i < at || (i === 2 && at === 2) ? <Check className="h-4 w-4" /> : i + 1}
-          </motion.span>
-          <span className={clsx('hidden text-xs font-semibold md:block', i <= at ? 'text-ink' : 'text-muted')}>{s}</span>
-          {i < STEPS.length - 1 && <div className="h-0.5 flex-1 overflow-hidden rounded bg-surface-2"><motion.div className="h-full bg-ok" initial={false} animate={{ width: i < at ? '100%' : '0%' }} transition={{ duration: 0.6 }} /></div>}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function SlipModal({ item, onClose }: { item: any; onClose: () => void }) {
   const { data } = useQuery<any>({ queryKey: ['payslip', item?.payslip?.id], queryFn: () => get(`/payslips/${item.payslip.id}`), enabled: !!item?.payslip?.id });
   const p = data?.payslip;
@@ -87,7 +68,6 @@ export default function PayrollRun() {
   const [edits, setEdits] = useState<Record<string, Inputs>>({});
   const [q, setQ] = useState('');
   const [slip, setSlip] = useState<any>(null);
-  const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState<'calc' | 'excel' | null>(null);
   useEffect(() => setEdits({}), [data?.run?.calculatedAt]);
 
@@ -114,7 +94,6 @@ export default function PayrollRun() {
     } catch (e) { toast.error(e instanceof ApiError ? e.message : 'Calculation failed'); } finally { setBusy(null); }
   };
   const saveOnly = useAct(save, { success: 'Inputs saved — recalculate to update pay', invalidate: [['payroll-run', id]] });
-  const finalise = useAct(() => post(`/payroll-runs/${id}/finalise`), { success: 'Payroll finalised — employees can see their payslips', invalidate: [['payroll-run', id], ['payroll-runs']], onDone: () => setConfirm(false) });
   const remove = useAct(() => del(`/payroll-runs/${id}`), { success: 'Run deleted', invalidate: [['payroll-runs']], onDone: () => nav('/payroll') });
   const excel = async () => {
     setBusy('excel');
@@ -142,12 +121,9 @@ export default function PayrollRun() {
           {can('COMPANY_ADMIN') && !locked && <Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => window.confirm('Delete this payroll run?') && remove.mutate()}>Delete</Button>}
           {!locked && dirty > 0 && <Button variant="secondary" icon={<Save className="h-4 w-4" />} loading={saveOnly.isPending} onClick={() => saveOnly.mutate()}>Save {dirty} change{dirty > 1 ? 's' : ''}</Button>}
           {!locked && <Button variant={run.status === 'CALCULATED' && !dirty ? 'secondary' : 'primary'} icon={<Calculator className="h-4 w-4" />} loading={busy === 'calc'} onClick={calculate}>{run.status === 'DRAFT' ? 'Calculate salaries' : 'Recalculate'}</Button>}
-          {run.status !== 'DRAFT' && <Button variant={locked ? 'primary' : 'secondary'} icon={<FileSpreadsheet className="h-4 w-4" />} loading={busy === 'excel'} onClick={excel}>Download Excel{locked ? '' : ' (draft)'}</Button>}
-          {run.status === 'CALCULATED' && !dirty && can('COMPANY_ADMIN') && <Button variant="success" icon={<Lock className="h-4 w-4" />} onClick={() => setConfirm(true)}>Finalise</Button>}
+          {run.status !== 'DRAFT' && <Button icon={<FileSpreadsheet className="h-4 w-4" />} loading={busy === 'excel'} onClick={excel}>Download Excel</Button>}
         </div>
       </motion.div>
-
-      <Card hover={false} className="mb-5" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><Stepper status={run.status} /></Card>
 
       <AnimatePresence>
         {busy === 'calc' && (
@@ -204,13 +180,6 @@ export default function PayrollRun() {
       </Card>
 
       <SlipModal item={slip} onClose={() => setSlip(null)} />
-      <Modal open={confirm} onClose={() => setConfirm(false)} title={`Finalise ${run.label}?`} footer={<><Button variant="secondary" onClick={() => setConfirm(false)}>Cancel</Button><Button variant="success" loading={finalise.isPending} onClick={() => finalise.mutate()} icon={<Lock className="h-4 w-4" />}>Finalise payroll</Button></>}>
-        <div className="space-y-3 text-sm">
-          <p>Finalising locks this month's numbers, publishes payslips to {t?.employees} employees, and makes the Excel the final salary sheet.</p>
-          {t && <div className="rounded-xl bg-surface-2 p-4"><div className="flex justify-between"><span>Net pay</span><b>{inr(t.net)}</b></div><div className="flex justify-between"><span>TDS to deposit by the 7th</span><b>{inr(t.tds)}</b></div><div className="flex justify-between"><span>Total cost</span><b>{inr(t.gross + t.employerCost)}</b></div></div>}
-          <p className="text-muted">After this, corrections go through a correction (reversal) run.</p>
-        </div>
-      </Modal>
     </>
   );
 }

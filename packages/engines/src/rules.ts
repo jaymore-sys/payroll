@@ -76,8 +76,11 @@ export interface StatutoryRule<P = unknown> {
 }
 
 export const STATUTORY_RULES: StatutoryRule[] = [
-  { id: 'pf-2014-09', ruleType: 'pf', state: null, effectiveFrom: '2014-09-01', effectiveTo: null, sourceNote: 'EPF Scheme 1952; ceiling ₹15,000',
+  { id: 'pf-2014-09', ruleType: 'pf', state: null, effectiveFrom: '2014-09-01', effectiveTo: '2026-09-16', sourceNote: 'EPF Scheme 1952; ceiling ₹15,000',
     params: { empRate: 0.12, erRate: 0.12, epsRate: 0.0833, ceiling: 15000, epsMax: 1250, edliRate: 0.005, adminRate: 0.005, adminMin: 500, epsAgeLimit: 58 } satisfies PfParams },
+  // S.O. 5109(E): EPF/EPS/EDLI wage ceiling ₹25,000 from 17 Sep 2026 → max PF ₹3,000, EPS ₹2,083. Rules apply by wage month (1st), so October 2026 is the first month on it.
+  { id: 'pf-2026-09', ruleType: 'pf', state: null, effectiveFrom: '2026-09-17', effectiveTo: null, sourceNote: 'EPF wage ceiling ₹25,000 (S.O. 5109(E), 17 Sep 2026)',
+    params: { empRate: 0.12, erRate: 0.12, epsRate: 0.0833, ceiling: 25000, epsMax: 2083, edliRate: 0.005, adminRate: 0.005, adminMin: 500, epsAgeLimit: 58 } satisfies PfParams },
   { id: 'esi-2019-07', ruleType: 'esi', state: null, effectiveFrom: '2019-07-01', effectiveTo: null, sourceNote: 'ESI rates 0.75% / 3.25%, ceiling ₹21,000',
     params: { grossLimit: 21000, pwdGrossLimit: 25000, empRate: 0.0075, erRate: 0.0325, empExemptDailyWage: 176 } satisfies EsiParams },
   { id: 'pt-mh-2023', ruleType: 'pt', state: 'MH', effectiveFrom: '2023-04-01', effectiveTo: null, sourceNote: 'Maharashtra PT; ₹300 in February',

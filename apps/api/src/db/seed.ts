@@ -18,7 +18,8 @@ export async function ensureSeeded(password: string) {
 
 export async function seedRules() {
   for (const r of STATUTORY_RULES) {
-    await db.insert(schema.statutoryRules).values({ ruleKey: r.id, ruleType: r.ruleType, state: r.state, effectiveFrom: r.effectiveFrom, effectiveTo: r.effectiveTo, params: r.params, sourceNote: r.sourceNote }).onConflictDoNothing();
+    await db.insert(schema.statutoryRules).values({ ruleKey: r.id, ruleType: r.ruleType, state: r.state, effectiveFrom: r.effectiveFrom, effectiveTo: r.effectiveTo, params: r.params, sourceNote: r.sourceNote })
+      .onConflictDoUpdate({ target: schema.statutoryRules.ruleKey, set: { effectiveTo: r.effectiveTo, params: r.params, sourceNote: r.sourceNote } }); // law changes reach existing databases
   }
   for (const t of TAX_RULES) await db.insert(schema.taxRules).values({ taxYear: t.taxYear, regime: t.regime, ageBand: t.ageBand, data: t }).onConflictDoNothing();
 }

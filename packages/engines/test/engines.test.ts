@@ -60,6 +60,11 @@ describe('statutory engine (spec §6)', () => {
     const s = computeStatutory(emp, m, SR);
     expect(s.pf).toMatchObject({ pfWage: 15000, employee: 1800, eps: 1250, epf: 550, edli: 75 });
   });
+  it('PF ceiling ₹25,000 from October 2026 wages: ₹3,000 employee, EPS ₹2,083', () => {
+    expect(computeStatutory(emp, { ...m, month: '2026-09' }, SR).pf).toMatchObject({ employee: 1800 }); // notified 17 Sep
+    expect(computeStatutory(emp, { ...m, month: '2026-10' }, SR).pf).toMatchObject({ pfWage: 25000, employee: 3000, eps: 2083, epf: 917, edli: 125 });
+    expect(computeStatutory(emp, { ...m, month: '2026-10', pfWage: 20000 }, SR).pf).toMatchObject({ employee: 2400 }); // 12% of actual wage below the ceiling
+  });
   it('PF on actual wage when cap is off', () => {
     const s = computeStatutory({ ...emp, pfCapMode: 'actual' }, m, SR);
     expect(s.pf).toMatchObject({ employee: 3600, eps: 1250, epf: 2350 });

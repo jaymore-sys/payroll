@@ -12,7 +12,7 @@ function CompanyForm({ c, edit }: { c: any; edit: boolean }) {
   const [v, setV] = useState<any>(c);
   const [errs, setErrs] = useState<Record<string, string>>({});
   useEffect(() => setV(c), [c]);
-  const save = useAct(() => put('/company', Object.fromEntries(Object.entries(v).filter(([k]) => !['id', 'createdAt', 'updatedAt', 'nextEmployeeSeq', 'weekPattern'].includes(k)))), { success: 'Company saved', invalidate: [['company']] });
+  const save = useAct(() => put('/company', Object.fromEntries(Object.entries(v).filter(([k]) => !['id', 'createdAt', 'updatedAt', 'nextEmployeeSeq', 'twoPersonRule'].includes(k)))), { success: 'Company saved', invalidate: [['company']] });
   useEffect(() => { setErrs(fieldErrors(save.error)); }, [save.error]);
   const t = (k: string, l: string, upper = false) => <Field label={l} error={errs[k]}><Input disabled={!edit} value={v[k] ?? ''} onChange={(e) => setV({ ...v, [k]: upper ? e.target.value.toUpperCase() : e.target.value })} /></Field>;
   return (
@@ -23,19 +23,25 @@ function CompanyForm({ c, edit }: { c: any; edit: boolean }) {
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Pay day"><Input type="number" min={1} max={31} disabled={!edit} value={v.payDay} onChange={(e) => setV({ ...v, payDay: Number(e.target.value) })} /></Field>
           <Field label="Attendance cut-off day"><Input type="number" min={1} max={31} disabled={!edit} value={v.cutoffDay} onChange={(e) => setV({ ...v, cutoffDay: Number(e.target.value) })} /></Field>
-          <Field label="Payable days"><Select disabled={!edit} value={v.payableDaysMethod} onChange={(e) => setV({ ...v, payableDaysMethod: e.target.value })}><option value="calendar">Calendar days</option><option value="fixed30">Fixed 30</option><option value="working">Working days</option></Select></Field>
-          <Field label="PF wage"><Select disabled={!edit} value={v.pfCapMode} onChange={(e) => setV({ ...v, pfCapMode: e.target.value })}><option value="capped">Capped at ₹15,000</option><option value="actual">Actual wage</option></Select></Field>
+          <Field label="Payable days"><Select disabled={!edit} value={v.payableDaysMethod} onChange={(e) => setV({ ...v, payableDaysMethod: e.target.value })}><option value="calendar">Calendar days</option><option value="fixed30">Fixed 30</option></Select></Field>
+          <Field label="PF wage"><Select disabled={!edit} value={v.pfCapMode} onChange={(e) => setV({ ...v, pfCapMode: e.target.value })}><option value="capped">Capped at ₹25,000</option><option value="actual">Actual wage</option></Select></Field>
+          <Field label="Weekly off" hint="Sets working days on the attendance sheet"><Select disabled={!edit} value={JSON.stringify(v.weekPattern ?? {})} onChange={(e) => setV({ ...v, weekPattern: JSON.parse(e.target.value) })}>
+            {WEEK_OFFS.map(([l, p]) => <option key={l} value={JSON.stringify(p)}>{l}</option>)}</Select></Field>
           <Field label="Employee code prefix"><Input disabled={!edit} value={v.employeeCodePrefix} onChange={(e) => setV({ ...v, employeeCodePrefix: e.target.value.toUpperCase() })} /></Field>
           <Field label="Financial year starts"><Select disabled={!edit} value={v.fyStartMonth} onChange={(e) => setV({ ...v, fyStartMonth: Number(e.target.value) })}><option value={4}>April</option><option value={1}>January</option></Select></Field>
           <div className="space-y-3 sm:col-span-2">
             <Switch checked={v.labourCodeMode} onChange={(x) => edit && setV({ ...v, labourCodeMode: x })} label="Labour Code mode (50% wage rule for PF/ESI/gratuity)" />
-            <Switch checked={v.twoPersonRule} onChange={(x) => edit && setV({ ...v, twoPersonRule: x })} label="Two-person rule (processor can't finalise payroll)" />
           </div>
         </div>
         {edit && <div className="mt-5 flex justify-end"><Button loading={save.isPending} onClick={() => save.mutate()}>Save changes</Button></div>}</Card>
     </Stagger>
   );
 }
+
+const WEEK_OFFS: [string, { weeklyOffs: number[]; offSaturdaysOfMonth?: number[] }][] = [
+  ['Sunday only', { weeklyOffs: [0] }], ['Saturday + Sunday', { weeklyOffs: [0, 6] }],
+  ['Sunday + 2nd & 4th Saturday', { weeklyOffs: [0], offSaturdaysOfMonth: [2, 4] }], ['Sunday + 1st & 3rd Saturday', { weeklyOffs: [0], offSaturdaysOfMonth: [1, 3] }],
+];
 
 export default function Settings() {
   const { can } = useAuth();

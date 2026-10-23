@@ -62,10 +62,7 @@ export default function Attendance() {
   const cur = (i: any): Rec | null => edits[i.employeeId] ?? i.record;
   const setVal = (i: any, k: keyof Rec, v: number) => setEdits((e) => {
     const base: Rec = e[i.employeeId] ?? i.record ?? { presentDays: i.workingDays, paidLeaveDays: 0, lopDays: 0, overtimeHours: 0 };
-    const next = { ...base, [k]: v };
-    // Present + paid leave + LOP should add up to working days: keep LOP in step when present or paid leave changes.
-    if (k === 'presentDays' || k === 'paidLeaveDays') next.lopDays = Math.max(0, i.workingDays - next.presentDays - next.paidLeaveDays);
-    return { ...e, [i.employeeId]: next };
+    return { ...e, [i.employeeId]: { ...base, [k]: v } }; // LOP is entered by hand, never derived
   });
   const markAllPresent = () => setEdits((e) => {
     const n = { ...e };

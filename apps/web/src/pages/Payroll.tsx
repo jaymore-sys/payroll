@@ -8,7 +8,7 @@ import { get, post } from '../lib/api';
 import { dateTime, inr, inrShort } from '../lib/format';
 import { useAct } from '../lib/hooks';
 
-export const runTone: Record<string, Tone> = { DRAFT: 'gray', CALCULATED: 'blue', FINALISED: 'green' };
+export const runTone: Record<string, Tone> = { DRAFT: 'gray', CALCULATED: 'green', FINALISED: 'green' };
 export const monthLabel = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleString('en-IN', { month: 'long', year: 'numeric' });
 
 export default function Payroll() {
@@ -20,7 +20,7 @@ export default function Payroll() {
   const existing = data?.find((r) => r.month === month);
   return (
     <>
-      <PageHeader title="Run payroll" sub="Calculate salaries, review, finalise, then download the Excel to pay through your bank"
+      <PageHeader title="Run payroll" sub="Enter attendance, calculate salaries, then download the Excel to pay through your bank"
         actions={<Button icon={<CalendarPlus className="h-4 w-4" />} onClick={() => setOpen(true)}>New payroll run</Button>} />
       {!data ? <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-24" /></div> : !data.length ? (
         <Card hover={false}><EmptyState icon={<Banknote className="h-7 w-7" />} title="No payroll runs yet" sub="Start with this month: we'll pull everyone with a salary structure and calculate PF, ESI, PT, TDS and net pay." action={<Button onClick={() => setOpen(true)}>Run this month's payroll</Button>} /></Card>

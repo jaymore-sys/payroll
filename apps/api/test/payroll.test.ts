@@ -59,7 +59,7 @@ describe('payroll run → Excel', () => {
   it('exports an Excel workbook with register, bank transfer and statutory sheets', async () => {
     const r = await as('payroll').get(`/payroll-runs/${runId}/export.xlsx`).buffer(true).parse((res, cb) => { const b: Buffer[] = []; res.on('data', (c: Buffer) => b.push(c)); res.on('end', () => cb(null, Buffer.concat(b))); });
     expect(r.status).toBe(200);
-    expect(r.headers['content-disposition']).toMatch(/salary-.*-DRAFT\.xlsx/);
+    expect(r.headers['content-disposition']).toMatch(/salary-\d{4}-\d{2}\.xlsx/);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(r.body);
     expect(wb.worksheets.map((w) => w.name)).toEqual(['Summary', 'Salary register', 'Bank transfer', 'Statutory']);
@@ -68,16 +68,12 @@ describe('payroll run → Excel', () => {
     const log = await as('admin').get(`/audit?action=export_salary_sheet`);
     expect(log.body.total).toBe(1);
   });
-  it('only a Company Admin finalises; employees then see their payslip', async () => {
-    expect((await as('payroll').post(`/payroll-runs/${runId}/finalise`)).status).toBe(403);
-    expect((await as('admin').post(`/payroll-runs/${runId}/finalise`)).status).toBe(200);
-    expect((await as('payroll').post(`/payroll-runs/${runId}/calculate`)).status).toBe(409);
-    expect((await as('payroll').put(`/payroll-runs/${runId}/inputs`, { items: [{ employeeId: '00000000-0000-0000-0000-000000000000', lopDays: 0, bonus: 0, otherEarnings: 0, otherDeductions: 0, hold: false }] })).status).toBe(409);
+  it('once calculated, employees see their own payslip and nobody else’s', async () => {
+    expect((await as('payroll').post(`/payroll-runs/${runId}/finalise`)).status).toBe(404); // no finalise step any more
     const mine = await as('employee').get('/payslips');
     expect(mine.body).toHaveLength(1);
     const slip = await as('employee').get(`/payslips/${mine.body[0].id}`);
     expect(slip.body.payslip.net).toBe(Number(mine.body[0].net));
-    // another employee's payslip is invisible
     const [otherSlip] = await db.select().from(schema.payslips).where(eq(schema.payslips.runId, runId));
     if (otherSlip.id !== mine.body[0].id) expect((await as('employee').get(`/payslips/${otherSlip.id}`)).status).toBe(404);
   });
