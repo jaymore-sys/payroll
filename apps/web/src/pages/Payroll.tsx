@@ -8,7 +8,8 @@ import { get, post } from '../lib/api';
 import { dateTime, inr, inrShort } from '../lib/format';
 import { useAct } from '../lib/hooks';
 
-export const runTone: Record<string, Tone> = { DRAFT: 'gray', CALCULATED: 'green', FINALISED: 'green' };
+export const runTone: Record<string, Tone> = { DRAFT: 'gray', CALCULATED: 'blue', FINALISED: 'green' };
+export const runLabel: Record<string, string> = { DRAFT: 'not calculated', CALCULATED: 'awaiting approval', FINALISED: 'approved' };
 export const monthLabel = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleString('en-IN', { month: 'long', year: 'numeric' });
 
 export default function Payroll() {
@@ -20,7 +21,7 @@ export default function Payroll() {
   const existing = data?.find((r) => r.month === month);
   return (
     <>
-      <PageHeader title="Run payroll" sub="Enter attendance, calculate salaries, then download the Excel to pay through your bank"
+      <PageHeader title="Run payroll" sub="1. Upload the attendance sheet  2. Check each employee’s salary and tax  3. Approve and download the salary sheet"
         actions={<Button icon={<CalendarPlus className="h-4 w-4" />} onClick={() => setOpen(true)}>New payroll run</Button>} />
       {!data ? <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-24" /></div> : !data.length ? (
         <Card hover={false}><EmptyState icon={<Banknote className="h-7 w-7" />} title="No payroll runs yet" sub="Start with this month: we'll pull everyone with a salary structure and calculate PF, ESI, PT, TDS and net pay." action={<Button onClick={() => setOpen(true)}>Run this month's payroll</Button>} /></Card>
@@ -31,14 +32,14 @@ export default function Payroll() {
               className="card flex w-full flex-col gap-3 p-5 text-left transition-colors hover:border-brand/40 sm:flex-row sm:items-center">
               <div className="flex flex-1 items-center gap-4">
                 <div className="gradient-brand grid h-12 w-12 shrink-0 place-items-center rounded-2xl text-white">{r.status === 'FINALISED' ? <Lock className="h-5 w-5" /> : <Banknote className="h-5 w-5" />}</div>
-                <div><p className="text-lg font-bold">{monthLabel(r.month)}</p><p className="text-xs text-muted">{r.finalisedAt ? `Finalised ${dateTime(r.finalisedAt)}` : r.calculatedAt ? `Calculated ${dateTime(r.calculatedAt)}` : 'Not calculated yet'}</p></div>
+                <div><p className="text-lg font-bold">{monthLabel(r.month)}</p><p className="text-xs text-muted">{r.finalisedAt ? `Approved ${dateTime(r.finalisedAt)}` : r.calculatedAt ? `Calculated ${dateTime(r.calculatedAt)}` : 'Not calculated yet'}</p></div>
               </div>
               {r.totals && <div className="grid grid-cols-3 gap-4 text-sm sm:w-[420px]">
                 <div><p className="text-xs text-muted">Employees</p><p className="font-bold">{r.totals.employees}</p></div>
                 <div><p className="text-xs text-muted">Net pay</p><p className="font-bold">{inrShort(r.totals.net)}</p></div>
                 <div><p className="text-xs text-muted">Cost</p><p className="font-bold">{inrShort(r.totals.gross + r.totals.employerCost)}</p></div>
               </div>}
-              <div className="flex items-center gap-3"><Badge tone={runTone[r.status]}>{r.status.toLowerCase()}</Badge><ChevronRight className="h-5 w-5 text-muted" /></div>
+              <div className="flex items-center gap-3"><Badge tone={runTone[r.status]}>{runLabel[r.status]}</Badge><ChevronRight className="h-5 w-5 text-muted" /></div>
             </motion.button>
           ))}
         </Stagger>

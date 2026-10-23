@@ -16,7 +16,7 @@ import { ApiError, forbidden, h, parse } from '../lib/http';
 export const attendanceRouter = Router();
 const A = schema.attendanceMonths, E = schema.employees;
 const MONTH = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Use YYYY-MM');
-const half = z.number().min(0).max(31).multipleOf(0.5);
+const half = z.number().min(0).max(31).multipleOf(0.1); // 0.1 day: hour-based sheets give fractional days
 
 /** Employees this user may record attendance for in the month, plus whether they can edit. */
 async function scope(req: Request, month: string) {
@@ -71,23 +71,31 @@ attendanceRouter.get('/attendance', h(async (req, res) => {
   });
 }));
 
-const item = z.object({ employeeId: z.string().uuid(), presentDays: half, paidLeaveDays: half, lopDays: half, overtimeHours: z.number().min(0).max(300).default(0), note: z.string().max(200).nullish() });
+const item = z.object({ employeeId: z.string().uuid(), workingDays: half.optional(), presentDays: half, paidLeaveDays: half, lopDays: half, overtimeHours: z.number().min(0).max(300).default(0), note: z.string().max(200).nullish() });
+
+type Row = Awaited<ReturnType<typeof withWorkingDays>>[number];
+/** Problems with one employee's month. Working days come from the uploaded sheet when it has them, else from the weekly-off calendar. */
+function problems(it: z.infer<typeof item>, r: Row) {
+  const wd = it.workingDays ?? r.workingDays, out: string[] = [];
+  if (it.presentDays + it.paidLeaveDays > wd) out.push(`${r.e.code}: present + paid leave (${it.presentDays + it.paidLeaveDays}) is more than ${wd} working days`);
+  if (it.lopDays > r.periodDays) out.push(`${r.e.code}: LOP cannot exceed ${r.periodDays} days on the rolls`);
+  return out;
+}
 
 async function save(req: Request, month: string, items: z.infer<typeof item>[]) {
-  if (await isLocked(req.user!.cid, month)) throw new ApiError(409, 'locked', 'Payroll for this month is finalised; attendance is locked');
+  if (await isLocked(req.user!.cid, month)) throw new ApiError(409, 'locked', 'Payroll for this month is approved; attendance is locked');
   const { emps, canEdit } = await scope(req, month);
   const rows = new Map((await withWorkingDays(req.user!.cid, month, emps)).map((r) => [r.e.id, r]));
   const errors: { employeeId: string; message: string }[] = [];
   for (const it of items) {
     const r = rows.get(it.employeeId);
     if (!r || !canEdit(it.employeeId)) { errors.push({ employeeId: it.employeeId, message: 'You cannot record attendance for this employee' }); continue; }
-    if (it.presentDays + it.paidLeaveDays > r.workingDays) errors.push({ employeeId: it.employeeId, message: `${r.e.code}: present + paid leave (${it.presentDays + it.paidLeaveDays}) is more than ${r.workingDays} working days` });
-    if (it.lopDays > r.periodDays) errors.push({ employeeId: it.employeeId, message: `${r.e.code}: LOP cannot exceed ${r.periodDays} days on the rolls` });
+    for (const message of problems(it, r)) errors.push({ employeeId: it.employeeId, message });
   }
   if (errors.length) throw new ApiError(422, 'attendance_invalid', errors[0].message, errors.map((e) => ({ path: e.employeeId, message: e.message })));
   await db.transaction(async (tx) => {
     for (const it of items) {
-      const v = { workingDays: String(rows.get(it.employeeId)!.workingDays), presentDays: String(it.presentDays), paidLeaveDays: String(it.paidLeaveDays), lopDays: String(it.lopDays), overtimeHours: String(it.overtimeHours), note: it.note ?? null, enteredBy: req.user!.sub };
+      const v = { workingDays: String(it.workingDays ?? rows.get(it.employeeId)!.workingDays), presentDays: String(it.presentDays), paidLeaveDays: String(it.paidLeaveDays), lopDays: String(it.lopDays), overtimeHours: String(it.overtimeHours), note: it.note ?? null, enteredBy: req.user!.sub };
       await tx.insert(A).values({ companyId: req.user!.cid, employeeId: it.employeeId, month, ...v })
         .onConflictDoUpdate({ target: [A.companyId, A.employeeId, A.month], set: v });
     }
@@ -101,46 +109,147 @@ attendanceRouter.put('/attendance', h(async (req, res) => {
   res.json({ ok: true, saved: items.length });
 }));
 
-/** CSV import from the leave/attendance software: code, presentDays, paidLeaveDays, lopDays[, overtimeHours]. */
-/** Rows from an uploaded .xlsx (first sheet, first row = headers) — the exported sheet can be filled in and uploaded back. */
+/** Column names people actually use in their attendance sheets, matched ignoring case, spaces and punctuation. */
+const COLUMNS: Record<string, string[]> = {
+  code: ['code', 'empcode', 'employeecode', 'empid', 'employeeid', 'empno', 'employeeno', 'staffid', 'ecode'],
+  workingDays: ['workingdays', 'totalworkingdays', 'workdays', 'noofworkingdays', 'wd'],
+  presentDays: ['presentdays', 'present', 'dayspresent', 'daysworked', 'workeddays', 'totalpresent'],
+  paidLeaveDays: ['paidleavedays', 'paidleave', 'leave', 'leaves', 'leavedays', 'pl', 'approvedleave', 'paidleaves'],
+  lopDays: ['lopdays', 'lop', 'absent', 'absentdays', 'lwp', 'unpaidleave', 'unpaiddays', 'lossofpay'],
+  payableDays: ['payabledays', 'paiddays', 'payable', 'salarydays'],
+  overtimeHours: ['overtimehours', 'overtime', 'ot', 'othours'],
+  note: ['note', 'notes', 'remark', 'remarks'],
+};
+const norm = (h: unknown) => String(h ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const canonical = (h: unknown) => Object.entries(COLUMNS).find(([, names]) => names.includes(norm(h)))?.[0];
+const cell = (v: unknown) => (v && typeof v === 'object' && 'result' in (v as object) ? (v as { result: unknown }).result : v);
+
+const LABELS = {
+  payableDays: ['totalworkingdays', 'workingday', 'workingdays', 'payabledays', 'paiddays', 'daysworked'],
+  lopDays: ['noofleaves', 'leaves', 'lop', 'lopdays', 'unpaidleaves', 'leavesdeducted'],
+  late: ['late', 'lates', 'latemarks'],
+  halfDay: ['halfday', 'halfdays'],
+};
+const r1 = (v: unknown) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? undefined : Math.round(Number(v) * 10) / 10);
+
+/**
+ * Day-by-day attendance grid (one column per employee by name, one row per date, totals at the bottom such as
+ * "Total working Days" and "No. of Leaves") — every sheet in the workbook. Returns null if the workbook isn't laid out that way.
+ */
+function gridRows(wb: ExcelJS.Workbook) {
+  const rows: Record<string, unknown>[] = [];
+  let month: string | undefined, found = false;
+  for (const ws of wb.worksheets) {
+    let headRow = 0;
+    for (let i = 1; i <= Math.min(10, ws.rowCount) && !headRow; i++) if (norm(cell(ws.getRow(i).getCell(1).value)) === 'date') headRow = i;
+    if (!headRow) continue;
+    const top = cell(ws.getRow(1).getCell(1).value);
+    if (top instanceof Date && !month) month = top.toISOString().slice(0, 7);
+    const labelRow: Partial<Record<keyof typeof LABELS, number>> = {};
+    ws.eachRow((row, i) => {
+      const l = norm(cell(row.getCell(1).value));
+      for (const [k, names] of Object.entries(LABELS)) if (names.includes(l) && !labelRow[k as keyof typeof LABELS]) labelRow[k as keyof typeof LABELS] = i;
+    });
+    if (!labelRow.payableDays && !labelRow.lopDays) continue;
+    found = true;
+    const head = ws.getRow(headRow);
+    for (let c = 2; c <= ws.columnCount; c++) {
+      const name = String(cell(head.getCell(c).value) ?? '').trim();
+      if (!name) continue;
+      const at = (k: keyof typeof LABELS) => (labelRow[k] ? cell(ws.getRow(labelRow[k]!).getCell(c).value) : undefined);
+      rows.push({ name, sheet: ws.name, payableDays: r1(at('payableDays')), lopDays: r1(at('lopDays')), late: at('late'), halfDay: at('halfDay'), rawPayable: at('payableDays'), rawLop: at('lopDays') });
+    }
+  }
+  return found ? { rows, month } : null;
+}
+
+/** Rows from an uploaded .xlsx: first sheet; the header row is the first of the top 10 rows with an employee-code column. */
 async function rowsFromXlsx(b64: string) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(Buffer.from(b64, 'base64') as unknown as ArrayBuffer);
+  const grid = gridRows(wb);
+  if (grid) return { rows: grid.rows, columns: { name: 'Employee name (column header)', payableDays: 'Total working Days', lopDays: 'No. of Leaves' } as Record<string, string>, sheetMonth: grid.month };
   const ws = wb.worksheets[0];
   if (!ws) throw new ApiError(422, 'empty', 'The workbook has no sheets');
-  const head = (ws.getRow(1).values as unknown[]).map((v) => String(v ?? '').trim());
-  const out: Record<string, unknown>[] = [];
+  let headRow = 0, head: unknown[] = [];
+  for (let i = 1; i <= Math.min(10, ws.rowCount) && !headRow; i++) {
+    const vals = ws.getRow(i).values as unknown[];
+    if (vals.some((v) => canonical(cell(v)) === 'code')) { headRow = i; head = vals.map(cell); }
+  }
+  if (!headRow) throw new ApiError(422, 'no_code_column', 'Could not find an employee code column (e.g. "Emp Code") or a day-by-day sheet with a "Date" column');
+  const columns: Record<string, string> = {};
+  head.forEach((h) => { const c = canonical(h); if (c && !columns[c]) columns[c] = String(h).trim(); });
+  const rows: Record<string, unknown>[] = [];
   ws.eachRow((row, i) => {
-    if (i === 1) return;
-    const vals = row.values as unknown[];
-    const rec: Record<string, unknown> = {};
-    head.forEach((h, c) => { if (h) { const v = vals[c]; rec[h] = v && typeof v === 'object' && 'result' in (v as object) ? (v as { result: unknown }).result : v; } });
-    if (rec.code) out.push(rec);
+    if (i <= headRow) return;
+    const vals = row.values as unknown[], rec: Record<string, unknown> = {};
+    head.forEach((h, c) => { const k = canonical(h); if (k && rec[k] === undefined) rec[k] = cell(vals[c]); });
+    if (rec.code && !/^total/i.test(String(rec.code))) rows.push(rec);
   });
-  return out;
+  return { rows, columns, sheetMonth: undefined as string | undefined };
 }
 
 attendanceRouter.post('/attendance/import', h(async (req, res) => {
   const body = parse(z.object({ month: MONTH, rows: z.array(z.record(z.unknown())).max(5000).optional(), fileBase64: z.string().max(3_000_000).optional(), dryRun: z.boolean().default(true) })
     .refine((b) => b.rows?.length || b.fileBase64, 'Upload a file'), req.body);
   const { month, dryRun } = body;
-  const rows = body.fileBase64 ? await rowsFromXlsx(body.fileBase64) : body.rows!;
-  if (!rows.length) throw new ApiError(422, 'empty', 'No rows found — keep the header row and fill one row per employee');
+  const { rows, columns, sheetMonth } = body.fileBase64 ? await rowsFromXlsx(body.fileBase64) : { rows: body.rows!, columns: {} as Record<string, string>, sheetMonth: undefined };
+  if (sheetMonth && sheetMonth !== month) throw new ApiError(422, 'wrong_month', `This sheet is for ${sheetMonth}, but you are working on ${month}`);
+  if (!rows.length) throw new ApiError(422, 'empty', 'No employee rows found under the header row');
   const { emps, canEdit } = await scope(req, month);
+  const byId = new Map((await withWorkingDays(req.user!.cid, month, emps)).map((r) => [r.e.id, r]));
   const byCode = new Map(emps.map((x) => [x.e.code.toUpperCase(), x.e.id]));
-  const num = (v: unknown) => (v === '' || v === undefined || v === null ? 0 : Number(v));
+  // Name matching for sheets without codes: full name, else a unique first-name / prefix match.
+  const nm = (v: unknown) => String(v ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const byName = (raw: string): string | undefined | 'ambiguous' => {
+    const n = nm(raw), full = emps.filter((x) => nm(`${x.e.firstName} ${x.e.lastName}`) === n);
+    if (full.length === 1) return full[0].e.id;
+    const part = emps.filter((x) => nm(x.e.firstName) === n || nm(`${x.e.firstName} ${x.e.lastName}`).startsWith(`${n} `));
+    return part.length === 1 ? part[0].e.id : part.length > 1 ? 'ambiguous' : undefined;
+  };
+  const unmatched: string[] = [];
+  const has = (v: unknown) => v !== '' && v !== undefined && v !== null;
+  const num = (v: unknown) => (has(v) ? Number(v) : 0);
   const report: { row: number; errors: string[] }[] = [];
   const items: z.infer<typeof item>[] = [];
+  const preview: Record<string, unknown>[] = [];
   rows.forEach((raw, i) => {
+    if (raw.name !== undefined) { // day-by-day grid: matched by name, totals already worked out in the sheet
+      const id = byName(String(raw.name)), r = id && id !== 'ambiguous' ? byId.get(id) : undefined;
+      if (!r) { unmatched.push(`${String(raw.name).trim()}${id === 'ambiguous' ? ' (more than one employee has this name)' : ''} — ${raw.sheet}`); return; }
+      const dim = r.periodDays;
+      const lop = raw.lopDays !== undefined ? Number(raw.lopDays) : raw.payableDays !== undefined ? Math.max(0, Math.round((dim - Number(raw.payableDays)) * 10) / 10) : undefined;
+      if (lop === undefined) { report.push({ row: i + 1, errors: [`${raw.name}: "Total working Days" / "No. of Leaves" is not a number (${String(raw.rawPayable ?? raw.rawLop)})`] }); return; }
+      const payable = raw.payableDays !== undefined ? Number(raw.payableDays) : Math.max(0, dim - lop);
+      const note = [raw.late !== undefined && raw.late !== null && `Late ${raw.late}`, raw.halfDay !== undefined && raw.halfDay !== null && `Half day ${raw.halfDay}`].filter(Boolean).join(', ') || null;
+      const parsed = item.safeParse({ employeeId: r.e.id, workingDays: Math.round((payable + lop) * 10) / 10, presentDays: payable, paidLeaveDays: 0, lopDays: lop, overtimeHours: 0, note });
+      const errs = [...(!canEdit(r.e.id) ? [`${r.e.code}: not editable by you`] : []), ...(parsed.success ? problems(parsed.data, r) : parsed.error.issues.map((x) => `${raw.name} ${x.path.join('.')}: ${x.message}`))];
+      if (errs.length) report.push({ row: i + 1, errors: errs });
+      else { items.push(parsed.data!); preview.push({ code: r.e.code, name: `${r.e.firstName} ${r.e.lastName}`, sheetName: String(raw.name).trim(), workingDays: payable + lop, presentDays: payable, paidLeaveDays: 0, lopDays: lop, note }); }
+      return;
+    }
     const code = String(raw.code ?? raw.employeeCode ?? '').trim().toUpperCase();
-    const id = byCode.get(code);
-    const parsed = item.safeParse({ employeeId: id ?? '00000000-0000-0000-0000-000000000000', presentDays: num(raw.presentDays), paidLeaveDays: num(raw.paidLeaveDays), lopDays: num(raw.lopDays), overtimeHours: num(raw.overtimeHours), note: raw.note ? String(raw.note) : null });
-    const errs = [...(!id ? [`code "${code}" not found or not in your team`] : id && !canEdit(id) ? [`${code}: not editable by you`] : []), ...(parsed.success ? [] : parsed.error.issues.map((x) => `${x.path.join('.')}: ${x.message}`))];
-    if (errs.length) report.push({ row: i + 1, errors: errs }); else items.push(parsed.data!);
+    const id = byCode.get(code), r = id ? byId.get(id) : undefined;
+    const wd = has(raw.workingDays) ? num(raw.workingDays) : undefined;
+    const paid = num(raw.paidLeaveDays);
+    // LOP straight from the sheet; otherwise from payable days, or working days − present − paid leave.
+    const lop = has(raw.lopDays) ? num(raw.lopDays)
+      : has(raw.payableDays) && r ? Math.max(0, r.periodDays - num(raw.payableDays))
+      : wd !== undefined && has(raw.presentDays) ? Math.max(0, wd - num(raw.presentDays) - paid) : 0;
+    const present = has(raw.presentDays) ? num(raw.presentDays) : Math.max(0, (wd ?? r?.workingDays ?? 0) - paid - lop);
+    const parsed = item.safeParse({ employeeId: id ?? '00000000-0000-0000-0000-000000000000', workingDays: wd, presentDays: present, paidLeaveDays: paid, lopDays: lop, overtimeHours: num(raw.overtimeHours), note: raw.note ? String(raw.note) : null });
+    const errs = [
+      ...(!id ? [`code "${code}" not found or not in your team`] : !canEdit(id) ? [`${code}: not editable by you`] : []),
+      ...(parsed.success ? (r ? problems(parsed.data, r) : []) : parsed.error.issues.map((x) => `${x.path.join('.')}: ${x.message}`)),
+    ];
+    if (errs.length) report.push({ row: i + 1, errors: errs });
+    else { items.push(parsed.data!); preview.push({ code, name: `${r!.e.firstName} ${r!.e.lastName}`, workingDays: wd ?? r!.workingDays, presentDays: present, paidLeaveDays: paid, lopDays: lop }); }
   });
-  if (dryRun || report.length) return res.json({ dryRun, total: rows.length, valid: items.length, errorCount: report.length, report });
+  const inSheet = new Set(items.map((x) => x.employeeId));
+  const missing = [...byId.values()].filter((r) => canEdit(r.e.id) && !inSheet.has(r.e.id)).map((r) => `${r.e.code} ${r.e.firstName} ${r.e.lastName}`);
+  if (dryRun || report.length) return res.json({ dryRun, total: rows.length, valid: items.length, errorCount: report.length, report, columns, preview, missing, unmatched });
   await save(req, month, items);
-  res.json({ dryRun: false, total: rows.length, saved: items.length, errorCount: 0, report: [] });
+  res.json({ dryRun: false, total: rows.length, saved: items.length, errorCount: 0, report: [], columns, preview, missing, unmatched });
 }));
 
 attendanceRouter.get('/attendance/export.xlsx', h(async (req, res) => {

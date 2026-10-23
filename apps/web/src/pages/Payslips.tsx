@@ -21,7 +21,7 @@ export default function Payslips() {
   return (
     <>
       <PageHeader title="Pay slips" sub="Click a month to see the payslip, or download it as a PDF" />
-      {!data ? <Skeleton className="h-72" /> : !data.length ? <Card hover={false}><EmptyState icon={<ReceiptText className="h-7 w-7" />} title="No payslips yet" sub="Your payslip appears here as soon as HR calculates the month's payroll." /></Card> : (
+      {!data ? <Skeleton className="h-72" /> : !data.length ? <Card hover={false}><EmptyState icon={<ReceiptText className="h-7 w-7" />} title="No payslips yet" sub="Your payslip appears here as soon as HR approves the month's salaries." /></Card> : (
         <>
           <div className="mb-5 grid gap-4 md:grid-cols-[260px_1fr]">
             <Card hover={false} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>

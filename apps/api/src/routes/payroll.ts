@@ -1,5 +1,5 @@
 import { computePayslip, daysInMonth, fyMonth, taxYearOf, type Payslip } from '@payrollpro/engines';
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { db, schema } from '../db';
@@ -84,7 +84,7 @@ payrollRouter.post('/payroll-runs', requireRole(...ADMIN), h(async (req, res) =>
 
 payrollRouter.delete('/payroll-runs/:id', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const run = await loadRun(req);
-  if (run.status === 'FINALISED') throw new ApiError(409, 'finalised', 'A finalised run cannot be deleted');
+  if (run.status === 'FINALISED') throw new ApiError(409, 'finalised', 'An approved run cannot be deleted; reopen it first');
   await db.delete(R).where(eq(R.id, run.id));
   await audit(req, 'delete', 'payroll_run', run.id, { month: run.month, status: run.status });
   res.status(204).end();
@@ -103,7 +103,7 @@ payrollRouter.get('/payroll-runs/:id', requireRole(...ADMIN), h(async (req, res)
     .where(eq(I.runId, run.id)).orderBy(asc(E.code));
 
   const prev = await db.select({ emp: P.employeeId, net: P.net }).from(P).innerJoin(R, eq(R.id, P.runId))
-    .where(and(eq(P.companyId, cid), eq(P.month, prevMonth(run.month)), ne(R.status, 'DRAFT')));
+    .where(and(eq(P.companyId, cid), eq(P.month, prevMonth(run.month)), eq(R.status, 'FINALISED')));
   const prevNet = new Map(prev.map((p) => [p.emp, Number(p.net)]));
   const { withoutSalary } = await eligible(cid, run.month);
   const { first, last } = monthBounds(run.month);
@@ -136,11 +136,11 @@ payrollRouter.get('/payroll-runs/:id', requireRole(...ADMIN), h(async (req, res)
 /* ---------- inputs ---------- */
 payrollRouter.put('/payroll-runs/:id/inputs', requireRole(...ADMIN), h(async (req, res) => {
   const run = await loadRun(req);
-  if (run.status === 'FINALISED') throw new ApiError(409, 'finalised', 'This run is finalised');
+  if (run.status === 'FINALISED') throw new ApiError(409, 'finalised', 'This run is approved; reopen it to make changes');
   const dim = daysInMonth(run.month);
   const money = z.number().min(0).max(1e8);
   const { items } = parse(z.object({ items: z.array(z.object({
-    employeeId: z.string().uuid(), lopDays: z.number().min(0).max(dim).multipleOf(0.5), bonus: money, otherEarnings: money, otherDeductions: money, hold: z.boolean(), note: z.string().max(200).nullish(),
+    employeeId: z.string().uuid(), lopDays: z.number().min(0).max(dim).multipleOf(0.1), bonus: money, otherEarnings: money, otherDeductions: money, hold: z.boolean(), note: z.string().max(200).nullish(),
   })).min(1).max(5000) }), req.body);
   await db.transaction(async (tx) => {
     for (const it of items) {
@@ -156,7 +156,7 @@ payrollRouter.put('/payroll-runs/:id/inputs', requireRole(...ADMIN), h(async (re
 /* ---------- calculate ---------- */
 payrollRouter.post('/payroll-runs/:id/calculate', requireRole(...ADMIN), h(async (req, res) => {
   const run = await loadRun(req);
-  if (run.status === 'FINALISED') throw new ApiError(409, 'finalised', 'This run is finalised');
+  if (run.status === 'FINALISED') throw new ApiError(409, 'finalised', 'This run is approved; reopen it to make changes');
   const cid = req.user!.cid;
   await syncInputs(cid, run.id, run.month); // picks up joiners added after the run was created
   const [company] = await db.select().from(schema.companies).where(eq(schema.companies.id, cid));
@@ -170,7 +170,7 @@ payrollRouter.post('/payroll-runs/:id/calculate', requireRole(...ADMIN), h(async
   // Year-to-date from finalised payslips earlier in this financial year (spec §7.3 step 1).
   const ytdRows = await db.select({ emp: P.employeeId, taxable: sql<number>`sum(${P.taxableGross})::float`, tds: sql<number>`sum(${P.tds})::float`, pf: sql<number>`sum(${P.pf})::float`, pt: sql<number>`sum(${P.pt})::float`, months: sql<number>`count(*)::int` })
     .from(P).innerJoin(R, eq(R.id, P.runId))
-    .where(and(eq(P.companyId, cid), ne(R.status, 'DRAFT'), gte(P.month, fyStart(run.month)), lt(P.month, run.month))).groupBy(P.employeeId);
+    .where(and(eq(P.companyId, cid), eq(R.status, 'FINALISED'), gte(P.month, fyStart(run.month)), lt(P.month, run.month))).groupBy(P.employeeId);
   const ytd = new Map(ytdRows.map((r) => [r.emp, r]));
 
   const slips: (typeof P.$inferInsert)[] = [];
@@ -214,10 +214,26 @@ payrollRouter.post('/payroll-runs/:id/calculate', requireRole(...ADMIN), h(async
   res.json({ totals, errors });
 }));
 
+/* ---------- approve / reopen ---------- */
+payrollRouter.post('/payroll-runs/:id/approve', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
+  const run = await loadRun(req);
+  const [u] = await db.update(R).set({ status: 'FINALISED', finalisedAt: new Date(), finalisedBy: req.user!.sub }).where(and(eq(R.id, run.id), eq(R.status, 'CALCULATED'))).returning({ id: R.id });
+  if (!u) throw new ApiError(409, 'not_calculated', run.status === 'FINALISED' ? 'Already approved' : 'Calculate salaries before approving');
+  await audit(req, 'approve', 'payroll_run', run.id, { status: run.status }, { status: 'FINALISED', totals: run.totals });
+  res.json({ ok: true });
+}));
+payrollRouter.post('/payroll-runs/:id/reopen', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
+  const run = await loadRun(req);
+  const [u] = await db.update(R).set({ status: 'CALCULATED', finalisedAt: null, finalisedBy: null }).where(and(eq(R.id, run.id), eq(R.status, 'FINALISED'))).returning({ id: R.id });
+  if (!u) throw new ApiError(409, 'not_approved', 'This run is not approved');
+  await audit(req, 'reopen', 'payroll_run', run.id, { status: 'FINALISED' }, { status: 'CALCULATED' });
+  res.json({ ok: true });
+}));
+
 /* ---------- Excel salary sheet ---------- */
 payrollRouter.get('/payroll-runs/:id/export.xlsx', requireRole(...ADMIN), h(async (req, res) => {
   const run = await loadRun(req);
-  if (run.status === 'DRAFT') throw new ApiError(409, 'not_calculated', 'Calculate the run first');
+  if (run.status !== 'FINALISED') throw new ApiError(409, 'not_approved', 'Approve the salaries first; the salary sheet is generated from the approved run');
   const [company] = await db.select().from(schema.companies).where(eq(schema.companies.id, req.user!.cid));
   const rows = await db.select({
     slip: P, code: E.code, firstName: E.firstName, lastName: E.lastName, panLast4: E.panLast4, uan: E.uan, bankEnc: E.bankEnc,
@@ -251,14 +267,14 @@ payrollRouter.get('/payslips', h(async (req, res) => {
   if (eid !== req.user!.eid && !hasRole(req.user, ...ADMIN)) throw forbidden();
   const rows = await db.select({ id: P.id, month: P.month, gross: P.gross, net: P.net, tds: P.tds, deductions: P.totalDeductions, payableDays: P.payableDays })
     .from(P).innerJoin(R, eq(R.id, P.runId))
-    .where(and(eq(P.companyId, req.user!.cid), eq(P.employeeId, eid), ne(R.status, 'DRAFT'))).orderBy(desc(P.month));
+    .where(and(eq(P.companyId, req.user!.cid), eq(P.employeeId, eid), eq(R.status, 'FINALISED'))).orderBy(desc(P.month));
   res.json(rows.map((r) => ({ ...r, label: monthLabel(r.month), fyMonth: fyMonth(r.month) })));
 }));
 payrollRouter.get('/payslips/:id', h(async (req, res) => {
   const [p] = await db.select({ slip: P, status: R.status }).from(P).innerJoin(R, eq(R.id, P.runId)).where(and(eq(P.companyId, req.user!.cid), eq(P.id, req.params.id)));
   if (!p) throw notFound('Payslip');
   const admin = hasRole(req.user, ...ADMIN);
-  if (!admin && (p.slip.employeeId !== req.user!.eid || p.status === 'DRAFT')) throw notFound('Payslip');
+  if (!admin && (p.slip.employeeId !== req.user!.eid || p.status !== 'FINALISED')) throw notFound('Payslip');
   const [e] = await db.select({ code: E.code, firstName: E.firstName, lastName: E.lastName, panLast4: E.panLast4, uan: E.uan, bankLast4: E.bankLast4, doj: E.doj, designation: schema.designations.name, department: schema.departments.name })
     .from(E).leftJoin(schema.designations, eq(schema.designations.id, E.designationId)).leftJoin(schema.departments, eq(schema.departments.id, E.departmentId)).where(eq(E.id, p.slip.employeeId));
   const [c] = await db.select({ name: schema.companies.legalName, display: schema.companies.name, address: schema.companies.address }).from(schema.companies).where(eq(schema.companies.id, req.user!.cid));

@@ -8,6 +8,7 @@ import { Link } from 'react-router-dom';
 import { DeptCostChart, Donut, PALETTE, TrendChart } from '../components/charts';
 import { Avatar, Badge, Card, CardTitle, CountUp, Item, Skeleton, Stagger, Stat } from '../components/ui';
 import { get } from '../lib/api';
+import { runLabel, runTone } from './Payroll';
 import { useAuth } from '../lib/auth';
 import { date, dateShort, dateTime, daysUntil, inr, inrShort } from '../lib/format';
 
@@ -50,7 +51,7 @@ function AdminDash({ a, d }: { a: any; d: any }) {
     ex.noPan && { icon: <IdCard className="h-4 w-4" />, text: `${ex.noPan} employee(s) missing PAN — TDS at 20%`, to: '/employees', tone: 'warn' },
     ex.noBank && { icon: <Landmark className="h-4 w-4" />, text: `${ex.noBank} employee(s) missing bank details`, to: '/employees', tone: 'warn' },
     a.headcount.total - a.attendanceEntered > 0 && { icon: <CalendarCheck className="h-4 w-4" />, text: `${a.headcount.total - a.attendanceEntered} employee(s) without attendance this month`, to: '/attendance', tone: 'warn' },
-    a.payrollRun?.status !== 'CALCULATED' && a.payrollRun?.status !== 'FINALISED' && { icon: <Banknote className="h-4 w-4" />, text: a.payrollRun ? `This month's salaries need calculating` : `This month's payroll hasn't been started`, to: a.payrollRun ? `/payroll/${a.payrollRun.id}` : '/payroll', tone: 'info' },
+    a.payrollRun?.status !== 'FINALISED' && { icon: <Banknote className="h-4 w-4" />, text: !a.payrollRun ? `This month's payroll hasn't been started` : a.payrollRun.status === 'DRAFT' ? `Upload this month's attendance sheet and calculate salaries` : `This month's salaries are calculated — review and approve`, to: a.payrollRun ? `/payroll/${a.payrollRun.id}` : '/payroll', tone: 'info' },
     a.pendingChanges && { icon: <FileClock className="h-4 w-4" />, text: `${a.pendingChanges} profile change request(s) to review`, to: '/approvals', tone: 'info' },
   ].filter(Boolean) as { icon: React.ReactNode; text: string; to: string; tone: string }[];
   const monthly = a.cost.gross + a.cost.employer;
@@ -111,7 +112,7 @@ function AdminDash({ a, d }: { a: any; d: any }) {
           <CardTitle>This month's payroll</CardTitle>
           <div className="flex flex-col items-center py-2 text-center">
             <motion.div animate={{ rotate: [0, -6, 6, 0] }} transition={{ repeat: Infinity, duration: 4, repeatDelay: 2 }} className="gradient-brand mb-3 grid h-14 w-14 place-items-center rounded-2xl text-white"><Banknote className="h-7 w-7" /></motion.div>
-            <Badge tone={a.payrollRun && a.payrollRun.status !== 'DRAFT' ? 'green' : 'amber'}>{!a.payrollRun ? 'not started' : a.payrollRun.status === 'DRAFT' ? 'not calculated' : 'calculated'}</Badge>
+            <Badge tone={!a.payrollRun ? 'amber' : runTone[a.payrollRun.status]}>{!a.payrollRun ? 'not started' : runLabel[a.payrollRun.status]}</Badge>
             <p className="mt-2 text-xs text-muted">{a.attendanceEntered} of {a.headcount.total} attendance entered</p>
             <Link to={a.payrollRun ? `/payroll/${a.payrollRun.id}` : '/payroll'} className="mt-3 text-sm font-semibold text-brand">{a.payrollRun ? 'Open run →' : 'Start payroll →'}</Link>
           </div>
@@ -168,7 +169,7 @@ function MyDash({ d }: { d: any }) {
       </Card>
       <Card>
         <CardTitle action={<Link to="/payslips" className="text-xs font-semibold text-brand">All payslips</Link>}>{d.me.latestPayslip ? `${new Date(d.me.latestPayslip.month + '-01T00:00').toLocaleString('en-IN', { month: 'long', year: 'numeric' })} salary` : 'Latest payslip'}</CardTitle>
-        {!d.me.latestPayslip ? <p className="py-8 text-center text-sm text-muted">Your payslip appears here once payroll is calculated.</p> : (
+        {!d.me.latestPayslip ? <p className="py-8 text-center text-sm text-muted">Your payslip appears here once HR approves the month's salaries.</p> : (
           <div className="space-y-2.5 text-sm">
             {[['Earnings', d.me.latestPayslip.gross, ''], ['TDS', d.me.latestPayslip.tds, 'text-bad'], ['Total deductions', d.me.latestPayslip.deductions, 'text-bad']].map(([l, v, c], i) => (
               <motion.div key={l as string} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 + i * 0.08 }} className="flex justify-between"><span className="text-muted">{l}</span><b className={c as string}>{inr(v as number)}</b></motion.div>))}

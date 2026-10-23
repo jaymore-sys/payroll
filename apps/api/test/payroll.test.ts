@@ -56,6 +56,13 @@ describe('payroll run → Excel', () => {
     expect(t.payslip.notes.join(' ')).toMatch(/2 LOP/);
     expect(after.body.run.totals.net).toBe(after.body.items.reduce((a: number, x: { payslip: { net: number } }) => a + x.payslip.net, 0));
   });
+  it('only a Company Admin approves; the salary sheet comes after approval', async () => {
+    expect((await as('payroll').get(`/payroll-runs/${runId}/export.xlsx`)).status).toBe(409);
+    expect((await as('employee').get('/payslips')).body).toHaveLength(0); // not visible before approval
+    expect((await as('payroll').post(`/payroll-runs/${runId}/approve`)).status).toBe(403);
+    expect((await as('admin').post(`/payroll-runs/${runId}/approve`)).status).toBe(200);
+    expect((await as('payroll').post(`/payroll-runs/${runId}/calculate`)).status).toBe(409);
+  });
   it('exports an Excel workbook with register, bank transfer and statutory sheets', async () => {
     const r = await as('payroll').get(`/payroll-runs/${runId}/export.xlsx`).buffer(true).parse((res, cb) => { const b: Buffer[] = []; res.on('data', (c: Buffer) => b.push(c)); res.on('end', () => cb(null, Buffer.concat(b))); });
     expect(r.status).toBe(200);
@@ -68,14 +75,16 @@ describe('payroll run → Excel', () => {
     const log = await as('admin').get(`/audit?action=export_salary_sheet`);
     expect(log.body.total).toBe(1);
   });
-  it('once calculated, employees see their own payslip and nobody else’s', async () => {
-    expect((await as('payroll').post(`/payroll-runs/${runId}/finalise`)).status).toBe(404); // no finalise step any more
+  it('after approval employees see their own payslip and nobody else’s', async () => {
     const mine = await as('employee').get('/payslips');
     expect(mine.body).toHaveLength(1);
     const slip = await as('employee').get(`/payslips/${mine.body[0].id}`);
     expect(slip.body.payslip.net).toBe(Number(mine.body[0].net));
     const [otherSlip] = await db.select().from(schema.payslips).where(eq(schema.payslips.runId, runId));
     if (otherSlip.id !== mine.body[0].id) expect((await as('employee').get(`/payslips/${otherSlip.id}`)).status).toBe(404);
+    expect((await as('admin').post(`/payroll-runs/${runId}/reopen`)).status).toBe(200);
+    expect((await as('employee').get('/payslips')).body).toHaveLength(0);
+    expect((await as('admin').post(`/payroll-runs/${runId}/approve`)).status).toBe(200);
   });
 });
 
@@ -128,5 +137,30 @@ describe('manager attendance → payroll LOP', () => {
     expect(done.body.saved).toBe(ws.rowCount - 1);
     const after = await as('admin').get(`/attendance?month=${m}`);
     expect(after.body.items.every((i: { record: { lopDays: number } | null }) => i.record?.lopDays === 1)).toBe(true);
+  });
+});
+
+describe('day-by-day attendance sheet (employees as columns, totals at the bottom)', () => {
+  const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 2);
+  const m = d.toISOString().slice(0, 7);
+  it('reads Total working Days / No. of Leaves by employee name and skips unknown names', async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Employees');
+    ws.addRow([new Date(`${m}-01T00:00:00Z`)]);
+    ws.addRow(['Date', 'Sneha Kulkarni', 'Rohan', 'Nobody Here']);
+    for (let i = 1; i <= 28; i++) ws.addRow([`${i}`, i === 3 ? 'LOP' : null, i === 5 ? 'Half Day' : 'Late', null]);
+    ws.addRow(['Total working Days', 27, 29.5, 30]);
+    ws.addRow(['Late', 0, 27, 0]);
+    ws.addRow(['Half Day', 0, 1, 0]);
+    ws.addRow(['No. of Leaves', 3, 0.5, 0]);
+    const b64 = Buffer.from(await wb.xlsx.writeBuffer()).toString('base64');
+    const dry = await as('admin').post('/attendance/import', { month: m, fileBase64: b64, dryRun: true });
+    expect(dry.status).toBe(200);
+    expect(dry.body.errorCount).toBe(0);
+    expect(dry.body.preview.map((p: { name: string; lopDays: number }) => [p.name, p.lopDays])).toEqual([['Sneha Kulkarni', 3], ['Rohan Patil', 0.5]]);
+    expect(dry.body.unmatched[0]).toMatch(/Nobody Here/);
+    const other = new Date(`${m}-01T00:00:00Z`); other.setUTCMonth(other.getUTCMonth() + 1);
+    expect((await as('admin').post('/attendance/import', { month: other.toISOString().slice(0, 7), fileBase64: b64, dryRun: true })).status).toBe(422); // wrong month
+    expect((await as('admin').post('/attendance/import', { month: m, fileBase64: b64, dryRun: false })).body.saved).toBe(2);
   });
 });
