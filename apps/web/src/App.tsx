@@ -64,6 +64,7 @@ export default function App() {
             <Routes><Route path="*" element={<Login />} /></Routes>
           ) : (
             <Routes>
+              <Route path="login" element={<Navigate to="/" replace />} />
               <Route path="payslips/:id/print" element={<PayslipPrint />} />
               <Route element={<AppLayout />}>
                 <Route index element={<Suspense fallback={<PageSkeleton />}><Dashboard /></Suspense>} />
