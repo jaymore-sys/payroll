@@ -70,25 +70,29 @@ miscRouter.get('/dashboard', h(async (req, res) => {
       noPan: sql<number>`count(*) filter (where ${E.panEnc} is null)::int`, noBank: sql<number>`count(*) filter (where ${E.bankEnc} is null)::int`,
       noSalary: sql<number>`count(*) filter (where not exists (select 1 from salary_structure s where s.employee_id = "employee"."id"))::int`,
     }).from(E).where(active);
-    const [pending] = await db.select({ n: sql<number>`count(*)::int` }).from(LR).where(and(eq(LR.companyId, cid), eq(LR.status, 'PENDING')));
+    const month = t.slice(0, 7);
+    const [att] = await db.select({ n: sql<number>`count(*)::int` }).from(schema.attendanceMonths).where(and(eq(schema.attendanceMonths.companyId, cid), eq(schema.attendanceMonths.month, month)));
+    const [run] = await db.select({ status: schema.payrollRuns.status, id: schema.payrollRuns.id }).from(schema.payrollRuns).where(and(eq(schema.payrollRuns.companyId, cid), eq(schema.payrollRuns.month, month)));
     const [cr] = await db.select({ n: sql<number>`count(*)::int` }).from(schema.changeRequests).where(and(eq(schema.changeRequests.companyId, cid), eq(schema.changeRequests.status, 'PENDING')));
     const gender = await db.select({ g: E.gender, n: sql<number>`count(*)::int` }).from(E).where(active).groupBy(E.gender);
     const activity = await db.select({ action: schema.auditLog.action, entity: schema.auditLog.entity, at: schema.auditLog.at, email: U.email })
       .from(schema.auditLog).leftJoin(U, eq(U.id, schema.auditLog.userId)).where(eq(schema.auditLog.companyId, cid)).orderBy(desc(schema.auditLog.at)).limit(8);
     Object.assign(out, {
-      admin: { headcount: hc, cost, byDept, trend: trend.rows, exceptions: ex, pendingLeave: pending.n, pendingChanges: cr.n, gender, activity, onLeaveToday: await onLeaveToday() },
+      admin: { headcount: hc, cost, byDept, trend: trend.rows, exceptions: ex, attendanceEntered: att.n, payrollRun: run ?? null, pendingChanges: cr.n, gender, activity, onLeaveToday: await onLeaveToday() },
     });
   }
   if (u.eid && hasRole(u, 'REPORTING_MANAGER')) {
     const ids = await teamIds(cid, u.eid);
-    const [p] = ids.length ? await db.select({ n: sql<number>`count(*)::int` }).from(LR).where(and(eq(LR.companyId, cid), eq(LR.status, 'PENDING'), inArray(LR.employeeId, ids))) : [{ n: 0 }];
-    out.team = { size: ids.length, pendingApprovals: p.n, onLeaveToday: await onLeaveToday(ids) };
+    const [p] = ids.length ? await db.select({ n: sql<number>`count(*)::int` }).from(schema.attendanceMonths).where(and(eq(schema.attendanceMonths.companyId, cid), eq(schema.attendanceMonths.month, t.slice(0, 7)), inArray(schema.attendanceMonths.employeeId, ids))) : [{ n: 0 }];
+    out.team = { size: ids.length, attendanceEntered: p.n };
   }
   if (u.eid) {
     const [s] = await db.select().from(S).where(and(eq(S.companyId, cid), eq(S.employeeId, u.eid), lte(S.effectiveFrom, t))).orderBy(desc(S.effectiveFrom)).limit(1);
     const [me] = await db.select({ firstName: E.firstName, lastName: E.lastName, code: E.code, doj: E.doj, taxRegime: E.taxRegime }).from(E).where(eq(E.id, u.eid));
-    const myPending = await db.select({ n: sql<number>`count(*)::int` }).from(LR).where(and(eq(LR.employeeId, u.eid), eq(LR.status, 'PENDING')));
-    out.me = { ...me, salary: s ? { annualCtc: Number(s.annualCtc), breakup: s.breakup, effectiveFrom: s.effectiveFrom } : null, pendingLeave: myPending[0].n };
+    const [slip] = await db.select({ id: schema.payslips.id, month: schema.payslips.month, gross: schema.payslips.gross, net: schema.payslips.net, tds: schema.payslips.tds, deductions: schema.payslips.totalDeductions })
+      .from(schema.payslips).innerJoin(schema.payrollRuns, eq(schema.payrollRuns.id, schema.payslips.runId))
+      .where(and(eq(schema.payslips.employeeId, u.eid), eq(schema.payrollRuns.status, 'FINALISED'))).orderBy(desc(schema.payslips.month)).limit(1);
+    out.me = { ...me, salary: s ? { annualCtc: Number(s.annualCtc), breakup: s.breakup, effectiveFrom: s.effectiveFrom } : null, latestPayslip: slip ?? null };
   }
   res.json(out);
 }));

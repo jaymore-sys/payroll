@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { DeptCostChart, Donut, PALETTE, TrendChart } from '../components/charts';
-import { Avatar, Badge, Card, CardTitle, Item, Skeleton, Stagger, Stat } from '../components/ui';
+import { Avatar, Badge, Card, CardTitle, CountUp, Item, Skeleton, Stagger, Stat } from '../components/ui';
 import { get } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { date, dateShort, dateTime, daysUntil, inr, inrShort } from '../lib/format';
@@ -49,7 +49,8 @@ function AdminDash({ a, d }: { a: any; d: any }) {
     ex.noSalary && { icon: <Wallet className="h-4 w-4" />, text: `${ex.noSalary} employee(s) without a salary structure`, to: '/employees', tone: 'bad' },
     ex.noPan && { icon: <IdCard className="h-4 w-4" />, text: `${ex.noPan} employee(s) missing PAN — TDS at 20%`, to: '/employees', tone: 'warn' },
     ex.noBank && { icon: <Landmark className="h-4 w-4" />, text: `${ex.noBank} employee(s) missing bank details`, to: '/employees', tone: 'warn' },
-    a.pendingLeave && { icon: <CalendarCheck className="h-4 w-4" />, text: `${a.pendingLeave} leave request(s) awaiting approval`, to: '/approvals', tone: 'info' },
+    a.headcount.total - a.attendanceEntered > 0 && { icon: <CalendarCheck className="h-4 w-4" />, text: `${a.headcount.total - a.attendanceEntered} employee(s) without attendance this month`, to: '/attendance', tone: 'warn' },
+    a.payrollRun?.status !== 'FINALISED' && { icon: <Banknote className="h-4 w-4" />, text: a.payrollRun ? `This month's payroll is ${a.payrollRun.status.toLowerCase()} — review and finalise` : `This month's payroll hasn't been started`, to: a.payrollRun ? `/payroll/${a.payrollRun.id}` : '/payroll', tone: 'info' },
     a.pendingChanges && { icon: <FileClock className="h-4 w-4" />, text: `${a.pendingChanges} profile change request(s) to review`, to: '/approvals', tone: 'info' },
   ].filter(Boolean) as { icon: React.ReactNode; text: string; to: string; tone: string }[];
   const monthly = a.cost.gross + a.cost.employer;
@@ -59,7 +60,7 @@ function AdminDash({ a, d }: { a: any; d: any }) {
         <Stat label="Active employees" value={a.headcount.total} icon={<Users className="h-5 w-5" />} hint={<>{a.headcount.joiners} joined this month · {a.headcount.notice} on notice</>} />
         <Stat label="Monthly payroll cost" value={monthly} format={inrShort} tone="ok" icon={<Banknote className="h-5 w-5" />} hint={<>Gross {inrShort(a.cost.gross)} + employer {inrShort(a.cost.employer)}</>} />
         <Stat label="Annual CTC" value={a.cost.ctc} format={inrShort} tone="info" icon={<Coins className="h-5 w-5" />} hint="Active salary structures" />
-        <Stat label="Pending approvals" value={a.pendingLeave + a.pendingChanges} tone="warn" icon={<Clock className="h-5 w-5" />} hint={<>{a.pendingLeave} leave · {a.pendingChanges} profile</>} />
+        <Stat label="Attendance entered" value={a.attendanceEntered} tone="warn" icon={<Clock className="h-5 w-5" />} hint={<>of {a.headcount.total} this month · <Link to="/attendance" className="font-semibold text-brand">open</Link></>} />
       </Stagger>
 
       <Stagger className="mt-4 grid gap-4 xl:grid-cols-5">
@@ -95,21 +96,25 @@ function AdminDash({ a, d }: { a: any; d: any }) {
         <Card>
           <CardTitle>Quick links</CardTitle>
           <div className="grid grid-cols-3 gap-2.5">
-            <QuickLink i={0} to="/employees?new=1" icon={<UserPlus className="h-5 w-5" />} label="Add employee" />
+            <QuickLink i={0} to="/payroll" icon={<Banknote className="h-5 w-5" />} label="Run payroll" />
             <QuickLink i={1} to="/ctc" icon={<Wallet className="h-5 w-5" />} label="CTC builder" />
             <QuickLink i={2} to="/tax" icon={<Calculator className="h-5 w-5" />} label="Tax calc" />
             <QuickLink i={3} to="/approvals" icon={<CalendarCheck className="h-5 w-5" />} label="Approvals" />
-            <QuickLink i={4} to="/policies" icon={<CalendarDays className="h-5 w-5" />} label="Leave policy" />
-            <QuickLink i={5} to="/settings" icon={<Building2 className="h-5 w-5" />} label="Setup" />
+            <QuickLink i={4} to="/attendance" icon={<CalendarDays className="h-5 w-5" />} label="Attendance" />
+            <QuickLink i={5} to="/employees?new=1" icon={<UserPlus className="h-5 w-5" />} label="Add employee" />
           </div>
         </Card>
       </Stagger>
 
       <Stagger className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card>
-          <CardTitle>On leave today</CardTitle>
-          {!a.onLeaveToday.length ? <p className="py-6 text-center text-sm text-muted">Everyone's in today</p> :
-            <ul className="space-y-2.5">{a.onLeaveToday.map((p: any) => <li key={p.name} className="flex items-center gap-3"><Avatar name={p.name} size="sm" /><span className="flex-1 truncate text-sm font-medium">{p.name}</span><Badge tone="amber">{p.type}</Badge></li>)}</ul>}
+          <CardTitle>This month's payroll</CardTitle>
+          <div className="flex flex-col items-center py-2 text-center">
+            <motion.div animate={{ rotate: [0, -6, 6, 0] }} transition={{ repeat: Infinity, duration: 4, repeatDelay: 2 }} className="gradient-brand mb-3 grid h-14 w-14 place-items-center rounded-2xl text-white"><Banknote className="h-7 w-7" /></motion.div>
+            <Badge tone={a.payrollRun?.status === 'FINALISED' ? 'green' : a.payrollRun ? 'blue' : 'amber'}>{a.payrollRun ? a.payrollRun.status.toLowerCase() : 'not started'}</Badge>
+            <p className="mt-2 text-xs text-muted">{a.attendanceEntered} of {a.headcount.total} attendance entered</p>
+            <Link to={a.payrollRun ? `/payroll/${a.payrollRun.id}` : '/payroll'} className="mt-3 text-sm font-semibold text-brand">{a.payrollRun ? 'Open run →' : 'Start payroll →'}</Link>
+          </div>
         </Card>
         <Holidays list={d.holidays} />
         <Card>
@@ -145,7 +150,6 @@ function Holidays({ list }: { list: any[] }) {
 
 function MyDash({ d }: { d: any }) {
   const s = d.me.salary;
-  const { data: bal } = useQuery<any[]>({ queryKey: ['balances', 'me'], queryFn: () => get('/leave/balances') });
   const comps = s?.breakup?.components?.filter((c: any) => c.monthly > 0) ?? [];
   return (
     <Stagger className="mt-4 grid gap-4 lg:grid-cols-3">
@@ -163,22 +167,22 @@ function MyDash({ d }: { d: any }) {
           </div>)}
       </Card>
       <Card>
-        <CardTitle action={<Link to="/leave" className="text-xs font-semibold text-brand">Apply</Link>}>My leave</CardTitle>
-        {!bal ? <div className="space-y-2"><Skeleton className="h-10" /><Skeleton className="h-10" /><Skeleton className="h-10" /></div> :
-          <ul className="space-y-3">{bal.filter((b) => b.paid && (b.balance > 0 || b.quota > 0)).slice(0, 4).map((b, i) => (
-            <li key={b.leaveTypeId}>
-              <div className="mb-1 flex justify-between text-sm"><span className="font-medium">{b.name}</span><span className="font-bold">{b.balance} <span className="font-normal text-muted">left</span></span></div>
-              <div className="h-2 overflow-hidden rounded-full bg-surface-2"><motion.div className="h-full rounded-full" style={{ background: PALETTE[i] }} initial={{ width: 0 }} animate={{ width: `${Math.min(100, (b.balance / Math.max(b.quota, b.balance, 1)) * 100)}%` }} transition={{ duration: 1, delay: 0.3 + i * 0.1 }} /></div>
-            </li>))}</ul>}
+        <CardTitle action={<Link to="/payslips" className="text-xs font-semibold text-brand">All payslips</Link>}>{d.me.latestPayslip ? `${new Date(d.me.latestPayslip.month + '-01T00:00').toLocaleString('en-IN', { month: 'long', year: 'numeric' })} salary` : 'Latest payslip'}</CardTitle>
+        {!d.me.latestPayslip ? <p className="py-8 text-center text-sm text-muted">Your payslip appears here once payroll is finalised.</p> : (
+          <div className="space-y-2.5 text-sm">
+            {[['Earnings', d.me.latestPayslip.gross, ''], ['TDS', d.me.latestPayslip.tds, 'text-bad'], ['Total deductions', d.me.latestPayslip.deductions, 'text-bad']].map(([l, v, c], i) => (
+              <motion.div key={l as string} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 + i * 0.08 }} className="flex justify-between"><span className="text-muted">{l}</span><b className={c as string}>{inr(v as number)}</b></motion.div>))}
+            <div className="gradient-brand mt-2 flex items-center justify-between rounded-2xl p-4 text-white"><span className="font-semibold">Net pay</span><span className="text-2xl font-extrabold"><CountUp value={Number(d.me.latestPayslip.net)} format={(x) => inr(x)} /></span></div>
+          </div>)}
       </Card>
       <Holidays list={d.holidays} />
       <Card className="lg:col-span-2">
         <CardTitle>Quick actions</CardTitle>
         <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4">
-          <QuickLink i={0} to="/leave" icon={<Plane className="h-5 w-5" />} label="Apply leave" />
+          <QuickLink i={0} to="/payslips" icon={<Plane className="h-5 w-5" />} label="Payslips" />
           <QuickLink i={1} to="/tax" icon={<Calculator className="h-5 w-5" />} label="Compare regimes" />
           <QuickLink i={2} to="/profile" icon={<IdCard className="h-5 w-5" />} label="My profile" />
-          <QuickLink i={3} to="/leave" icon={<CalendarHeart className="h-5 w-5" />} label="Leave ledger" />
+          <QuickLink i={3} to="/tax" icon={<CalendarHeart className="h-5 w-5" />} label="Tax deductions" />
         </div>
       </Card>
     </Stagger>
@@ -200,8 +204,8 @@ export default function Dashboard() {
       {d.team && !d.admin && (
         <Stagger className="mt-4 grid gap-4 sm:grid-cols-3">
           <Stat label="Team size" value={d.team.size} icon={<Users className="h-5 w-5" />} />
-          <Stat label="Pending approvals" value={d.team.pendingApprovals} tone="warn" icon={<CalendarCheck className="h-5 w-5" />} hint={<Link to="/approvals" className="font-semibold text-brand">Review →</Link>} />
-          <Stat label="Team on leave today" value={d.team.onLeaveToday.length} tone="info" icon={<PartyPopper className="h-5 w-5" />} hint={d.team.onLeaveToday.map((x: any) => x.name).join(', ') || 'Everyone is in'} />
+          <Stat label="Attendance entered" value={d.team.attendanceEntered} tone="ok" icon={<CalendarCheck className="h-5 w-5" />} hint={<>of {d.team.size} this month · <Link to="/attendance" className="font-semibold text-brand">enter →</Link></>} />
+          <Stat label="Still to enter" value={Math.max(0, d.team.size - d.team.attendanceEntered)} tone="warn" icon={<PartyPopper className="h-5 w-5" />} hint="before the payroll cut-off" />
         </Stagger>
       )}
       {d.me && !d.admin && <MyDash d={d} />}

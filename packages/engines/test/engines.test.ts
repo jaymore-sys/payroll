@@ -160,3 +160,14 @@ describe('leave calculator (spec §9)', () => {
     expect(yearEnd(45, 30, true, 10)).toEqual({ carry: 30, encash: 10, lapse: 5 });
   });
 });
+
+describe('working days', () => {
+  it('excludes Sundays, 2nd/4th Saturdays and holidays; clips to joining date', async () => {
+    const { workingDaysInMonth } = await import('../src');
+    const p = { weeklyOffs: [0], offSaturdaysOfMonth: [2, 4] };
+    // Nov 2026: 30 days, 5 Sundays, 2nd & 4th Saturday off → 23; Diwali 9 & 10 Nov → 21
+    expect(workingDaysInMonth('2026-11', p)).toBe(23);
+    expect(workingDaysInMonth('2026-11', p, ['2026-11-09', '2026-11-10'])).toBe(21);
+    expect(workingDaysInMonth('2026-11', p, [], '2026-11-16')).toBe(12);
+  });
+});

@@ -74,3 +74,17 @@ export const encashmentAmount = (basicDaMonthly: number, divisor: 26 | 30, days:
 export type LedgerKind = 'credit' | 'debit' | 'carry' | 'lapse' | 'encash' | 'adjust';
 export const balanceFromLedger = (rows: { kind: LedgerKind; days: number }[]) =>
   rows.reduce((b, r) => (r.kind === 'credit' || r.kind === 'carry' || r.kind === 'adjust' ? b + r.days : b - r.days), 0);
+
+/** Working days for an employee in a month: days on the rolls minus weekly offs and holidays. */
+export function workingDaysInMonth(month: string, pattern: WeekPattern, holidays: string[] = [], doj?: string, lastWorkingDay?: string | null) {
+  const [y, m] = month.split('-').map(Number);
+  const dim = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  let n = 0;
+  for (let d = 1; d <= dim; d++) {
+    const date = `${month}-${String(d).padStart(2, '0')}`;
+    if (doj && date < doj) continue;
+    if (lastWorkingDay && date > lastWorkingDay) continue;
+    if (!isOff(date, pattern, holidays)) n++;
+  }
+  return n;
+}

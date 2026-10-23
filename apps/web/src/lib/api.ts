@@ -40,3 +40,16 @@ export const get = <T = any>(p: string) => api<T>(p);
 export const post = <T = any>(p: string, body?: unknown) => api<T>(p, { method: 'POST', body: body ?? {} });
 export const put = <T = any>(p: string, body?: unknown) => api<T>(p, { method: 'PUT', body: body ?? {} });
 export const del = <T = any>(p: string) => api<T>(p, { method: 'DELETE' });
+
+/** Download a file from an authenticated endpoint (token in header, never in the URL). */
+export async function download(path: string, fallbackName: string) {
+  const go = () => fetch(`/api/v1${path}`, { credentials: 'include', headers: { 'X-Requested-With': 'payrollpro', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) } });
+  let res = await go();
+  if (res.status === 401 && (await refreshSession())) res = await go();
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new ApiError(res.status, d.code ?? 'error', d.message ?? 'Download failed'); }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(await res.blob());
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}

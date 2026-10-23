@@ -87,20 +87,18 @@ function ExitModal({ e, open, onClose }: { e: any; open: boolean; onClose: () =>
 export default function EmployeeDetail() {
   const { id = '' } = useParams();
   const { can } = useAuth();
-  const [tab, setTab] = useState<'overview' | 'salary' | 'leave' | 'history'>('overview');
+  const [tab, setTab] = useState<'overview' | 'salary' | 'history'>('overview');
   const [modal, setModal] = useState<'edit' | 'revise' | 'exit' | null>(null);
   const { data: e, isLoading, error } = useQuery<any>({ queryKey: ['employee', id], queryFn: () => get(`/employees/${id}`) });
   const showPay = e && e.access !== 'manager';
   const { data: structures } = useQuery<any[]>({ queryKey: ['structures', id], queryFn: () => get(`/employees/${id}/salary-structures`), enabled: !!showPay && tab === 'salary' });
-  const { data: bal } = useQuery<any[]>({ queryKey: ['balances', id], queryFn: () => get(`/leave/balances?employee=${id}`), enabled: tab === 'leave' });
-  const { data: ledger } = useQuery<any[]>({ queryKey: ['ledger', id], queryFn: () => get(`/leave/ledger?employee=${id}`), enabled: tab === 'leave' });
   const { data: history } = useQuery<any[]>({ queryKey: ['history', id], queryFn: () => get(`/employees/${id}/history`), enabled: tab === 'history' });
 
   if (error) return <EmptyState icon={<ShieldAlert className="h-7 w-7" />} title="Can't open this employee" sub={(error as Error).message} action={<Link to="/employees"><Button variant="secondary">Back</Button></Link>} />;
   if (isLoading || !e) return <div className="space-y-4"><Skeleton className="h-40 rounded-3xl" /><Skeleton className="h-12 w-96" /><Skeleton className="h-80" /></div>;
   const name = `${e.firstName} ${e.lastName}`;
   const admin = can('COMPANY_ADMIN'), pm = can('PAYROLL_MANAGER');
-  const tabs = [{ id: 'overview' as const, label: 'Overview', icon: <User className="h-4 w-4" /> }, ...(showPay ? [{ id: 'salary' as const, label: 'Salary', icon: <IndianRupee className="h-4 w-4" /> }] : []), { id: 'leave' as const, label: 'Leave', icon: <CalendarDays className="h-4 w-4" /> }, ...(admin || pm ? [{ id: 'history' as const, label: 'History', icon: <History className="h-4 w-4" /> }] : [])];
+  const tabs = [{ id: 'overview' as const, label: 'Overview', icon: <User className="h-4 w-4" /> }, ...(showPay ? [{ id: 'salary' as const, label: 'Salary', icon: <IndianRupee className="h-4 w-4" /> }] : []), ...(admin || pm ? [{ id: 'history' as const, label: 'History', icon: <History className="h-4 w-4" /> }] : [])];
   const current = structures?.find((s) => !s.effectiveTo) ?? structures?.[0];
 
   return (
@@ -156,15 +154,6 @@ export default function EmployeeDetail() {
                   <p className="font-bold">{inr(s.annualCtc)}</p><p className="text-xs text-muted">{date(s.effectiveFrom)} → {s.effectiveTo ? date(s.effectiveTo) : 'now'}</p>
                   {structures[i + 1] && <p className="mt-1 text-xs font-semibold text-ok">+{(((Number(s.annualCtc) - Number(structures[i + 1].annualCtc)) / Number(structures[i + 1].annualCtc)) * 100).toFixed(1)}%</p>}
                 </motion.li>))}</ol></Card>
-          </Stagger>)}
-
-        {tab === 'leave' && (
-          <Stagger className="space-y-4">
-            <Stagger className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">{(bal ?? []).map((b) => <Item key={b.leaveTypeId} className="card p-4 text-center"><p className="text-xs font-semibold text-muted">{b.code}</p><p className="mt-1 text-2xl font-extrabold">{b.balance}</p><p className="text-[11px] text-muted">{b.used} used</p></Item>)}</Stagger>
-            <Card hover={false}><CardTitle>Ledger</CardTitle>
-              <DataTable rows={ledger ?? []} keyOf={(r: any) => r.id} empty={<p className="py-6 text-center text-sm text-muted">No entries</p>}
-                cols={[{ h: 'Date', cell: (r: any) => date(r.date) }, { h: 'Type', cell: (r: any) => <Badge tone="brand">{r.type}</Badge> }, { h: 'Entry', cell: (r: any) => <span className="capitalize">{r.kind}</span> },
-                  { h: 'Days', cell: (r: any) => <b className={['credit', 'carry', 'adjust'].includes(r.kind) ? 'text-ok' : 'text-bad'}>{['credit', 'carry', 'adjust'].includes(r.kind) ? '+' : '−'}{Number(r.days)}</b> }, { h: 'Note', cell: (r: any) => <span className="text-muted">{r.note ?? r.refType ?? '—'}</span>, hideOnMobile: true }]} /></Card>
           </Stagger>)}
 
         {tab === 'history' && (

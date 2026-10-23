@@ -214,3 +214,66 @@ export const notifications = pgTable('notification', {
   readAt: timestamp('read_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index().on(t.userId, t.readAt)]);
+
+/* ---------- Payroll runs (spec §10) ---------- */
+export const runStatusEnum = pgEnum('run_status', ['DRAFT', 'CALCULATED', 'FINALISED']);
+
+export const payrollRuns = pgTable('payroll_run', {
+  id: id(), companyId: companyId(),
+  month: text('month').notNull(), // YYYY-MM
+  type: text('type').notNull().default('regular'),
+  status: runStatusEnum('status').notNull().default('DRAFT'),
+  totals: jsonb('totals'),
+  calculatedAt: timestamp('calculated_at', { withTimezone: true }), calculatedBy: uuid('calculated_by'),
+  finalisedAt: timestamp('finalised_at', { withTimezone: true }), finalisedBy: uuid('finalised_by'),
+  createdBy: uuid('created_by'), ...stamps,
+}, (t) => [uniqueIndex().on(t.companyId, t.month, t.type)]);
+
+/** Per-employee monthly inputs HR can edit until the run is finalised. */
+export const payrollInputs = pgTable('payroll_input', {
+  id: id(), companyId: companyId(),
+  runId: uuid('run_id').notNull().references(() => payrollRuns.id, { onDelete: 'cascade' }),
+  employeeId: uuid('employee_id').notNull().references(() => employees.id),
+  lopDays: numeric('lop_days', { precision: 5, scale: 1 }).notNull().default('0'),
+  bonus: money('bonus').notNull().default('0'),
+  otherEarnings: money('other_earnings').notNull().default('0'),
+  otherDeductions: money('other_deductions').notNull().default('0'),
+  hold: boolean('hold').notNull().default(false),
+  note: text('note'),
+  ...stamps,
+}, (t) => [uniqueIndex().on(t.runId, t.employeeId)]);
+
+export const payslips = pgTable('payslip', {
+  id: id(), companyId: companyId(),
+  runId: uuid('run_id').notNull().references(() => payrollRuns.id, { onDelete: 'cascade' }),
+  employeeId: uuid('employee_id').notNull().references(() => employees.id),
+  month: text('month').notNull(),
+  structureId: uuid('structure_id'),
+  payableDays: numeric('payable_days', { precision: 5, scale: 1 }).notNull(),
+  lopDays: numeric('lop_days', { precision: 5, scale: 1 }).notNull(),
+  gross: money('gross').notNull(),
+  totalDeductions: money('total_deductions').notNull(),
+  net: money('net').notNull(),
+  employerCost: money('employer_cost').notNull(),
+  tds: money('tds').notNull(),
+  taxableGross: money('taxable_gross').notNull(),
+  pf: money('pf').notNull(), pt: money('pt').notNull(),
+  hold: boolean('hold').notNull().default(false),
+  detail: jsonb('detail').notNull(), // full engine output: lines, tax worksheet, notes
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex().on(t.runId, t.employeeId), index().on(t.companyId, t.employeeId, t.month)]);
+
+/* ---------- Monthly attendance entered by managers (leave itself is applied in another system) ---------- */
+export const attendanceMonths = pgTable('attendance_month', {
+  id: id(), companyId: companyId(),
+  employeeId: uuid('employee_id').notNull().references(() => employees.id),
+  month: text('month').notNull(), // YYYY-MM
+  workingDays: numeric('working_days', { precision: 5, scale: 1 }).notNull(),
+  presentDays: numeric('present_days', { precision: 5, scale: 1 }).notNull(),
+  paidLeaveDays: numeric('paid_leave_days', { precision: 5, scale: 1 }).notNull().default('0'),
+  lopDays: numeric('lop_days', { precision: 5, scale: 1 }).notNull().default('0'),
+  overtimeHours: numeric('overtime_hours', { precision: 6, scale: 1 }).notNull().default('0'),
+  note: text('note'),
+  enteredBy: uuid('entered_by'),
+  ...stamps,
+}, (t) => [uniqueIndex().on(t.companyId, t.employeeId, t.month), index().on(t.companyId, t.month)]);

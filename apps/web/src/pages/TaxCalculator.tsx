@@ -1,10 +1,12 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Crown, Info, Sparkles } from 'lucide-react';
+import { Crown, Info, Sparkles, Wand2 } from 'lucide-react';
+import { useAuth } from '../lib/auth';
+import { get } from '../lib/api';
 import { useState } from 'react';
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
-import { Badge, Card, CardTitle, CountUp, Field, Input, Item, PageHeader, Select, Skeleton, Stagger, Switch, useDebounced } from '../components/ui';
+import { Badge, Button, Card, CardTitle, CountUp, Field, Input, Item, PageHeader, Select, Skeleton, Stagger, Switch, useDebounced } from '../components/ui';
 import { post } from '../lib/api';
 import { inr, inrShort } from '../lib/format';
 
@@ -49,9 +51,17 @@ export default function TaxCalculator() {
       deductions: { '80C': body['80C'] ?? 0, '80D': body['80D'] ?? 0, '80DParents': body['80DParents'] ?? 0, parentsSenior: body.senior, '80CCD1B': body['80CCD1B'] ?? 0, homeLoanInterest: body.homeLoanInterest ?? 0 },
     }),
   });
+  const { me } = useAuth();
+  const { data: dash } = useQuery<any>({ queryKey: ['dashboard'], queryFn: () => get('/dashboard'), enabled: !!me?.employeeId });
+  const mine = dash?.me?.salary?.breakup;
+  const useMine = () => {
+    const hra = mine.components.find((c: any) => c.code === 'HRA')?.monthly ?? 0;
+    setV({ ...v, annualSalary: mine.monthlyGross * 12 + (mine.annualVariable ?? 0), basicDaAnnual: mine.wages * 12, hraReceived: hra * 12, '80C': Math.max(v['80C'] ?? 0, mine.employee.pf * 12), professionalTax: mine.employee.pt * 12 });
+  };
   return (
     <>
-      <PageHeader title="Tax calculator" sub="Tax Year 2026-27 · Income-tax Act 2025 · compare both regimes side by side" />
+      <PageHeader title="Tax deductions" sub="Tax Year 2026-27 · Income-tax Act 2025 · compare both regimes side by side"
+        actions={mine && <Button variant="secondary" icon={<Wand2 className="h-4 w-4" />} onClick={useMine}>Use my salary</Button>} />
       <div className="grid gap-5 xl:grid-cols-[420px_1fr]">
         <Card hover={false} initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }}>
           <CardTitle sub="Fields marked OLD only count in the old regime">Your income & deductions</CardTitle>

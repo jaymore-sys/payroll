@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Bell, Building2, Calculator, CalendarDays, CheckCheck, ChevronsLeft, ClipboardCheck, FileClock, LayoutDashboard, LogOut, Menu, Moon, ShieldCheck, Sun, UserCircle2, Users, Wallet, X,
+  Banknote, Bell, Building2, Calculator, CalendarCheck2, CheckCheck, ChevronsLeft, ClipboardCheck, FileClock, LayoutDashboard, LogOut, Menu, Moon, ReceiptText, ShieldCheck, Sun, UserCircle2, Users, Wallet, X,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
@@ -17,11 +17,12 @@ type Nav = { to: string; label: string; icon: ReactNode; roles?: Role[]; needsEm
 const NAV: Nav[] = [
   { to: '/', label: 'Dashboard', icon: <LayoutDashboard className="h-[18px] w-[18px]" />, section: 'main' },
   { to: '/employees', label: 'People', icon: <Users className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN', 'PAYROLL_MANAGER', 'REPORTING_MANAGER'], section: 'main' },
-  { to: '/leave', label: 'Leave', icon: <CalendarDays className="h-[18px] w-[18px]" />, needsEmployee: true, section: 'main' },
-  { to: '/approvals', label: 'Approvals', icon: <ClipboardCheck className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN', 'REPORTING_MANAGER'], section: 'main' },
-  { to: '/tax', label: 'Tax calculator', icon: <Calculator className="h-[18px] w-[18px]" />, section: 'main' },
+  { to: '/payroll', label: 'Run payroll', icon: <Banknote className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN', 'PAYROLL_MANAGER'], section: 'main' },
+  { to: '/attendance', label: 'Attendance', icon: <CalendarCheck2 className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN', 'PAYROLL_MANAGER', 'REPORTING_MANAGER'], section: 'main' },
+  { to: '/payslips', label: 'My payslips', icon: <ReceiptText className="h-[18px] w-[18px]" />, needsEmployee: true, section: 'main' },
+  { to: '/approvals', label: 'Profile requests', icon: <ClipboardCheck className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN'], section: 'admin' },
+  { to: '/tax', label: 'Tax deductions', icon: <Calculator className="h-[18px] w-[18px]" />, section: 'main' },
   { to: '/ctc', label: 'CTC builder', icon: <Wallet className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN', 'PAYROLL_MANAGER'], section: 'main' },
-  { to: '/policies', label: 'Leave policies', icon: <CalendarDays className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN', 'PAYROLL_MANAGER'], section: 'admin' },
   { to: '/settings', label: 'Company setup', icon: <Building2 className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN', 'PAYROLL_MANAGER'], section: 'admin' },
   { to: '/users', label: 'Users & roles', icon: <ShieldCheck className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN'], section: 'admin' },
   { to: '/audit', label: 'Audit log', icon: <FileClock className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN', 'PAYROLL_MANAGER'], section: 'admin' },
@@ -209,7 +210,7 @@ export default function AppLayout() {
       {/* Mobile bottom bar */}
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden">
         <div className="grid grid-cols-4">
-          {[NAV[0], NAV[2], NAV[4], NAV[10]].map((n) => (
+          {['/', '/payslips', '/tax', '/profile'].map((to) => NAV.find((x) => x.to === to)!).map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => clsx('relative flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-semibold', isActive ? 'text-brand' : 'text-muted')}>
               {({ isActive }) => (<>{isActive && <motion.span layoutId="bottom-pill" className="absolute top-0 h-0.5 w-10 rounded-full bg-brand" />}<motion.span animate={{ scale: isActive ? 1.15 : 1 }}>{n.icon}</motion.span>{n.label.split(' ')[0]}</>)}
             </NavLink>

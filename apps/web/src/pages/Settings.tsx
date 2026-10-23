@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { Building2, Landmark, MapPin, Settings2, Shapes } from 'lucide-react';
+import { Building2, CalendarDays, Landmark, MapPin, Settings2, Shapes } from 'lucide-react';
+import { date } from '../lib/format';
 import { useEffect, useState } from 'react';
 import MasterList from '../components/MasterList';
 import { Badge, Button, Card, CardTitle, Field, Input, PageHeader, Select, Skeleton, Stagger, Switch, Tabs } from '../components/ui';
@@ -39,13 +40,13 @@ function CompanyForm({ c, edit }: { c: any; edit: boolean }) {
 export default function Settings() {
   const { can } = useAuth();
   const edit = can('COMPANY_ADMIN');
-  const [tab, setTab] = useState<'company' | 'entities' | 'branches' | 'org'>('company');
+  const [tab, setTab] = useState<'company' | 'entities' | 'branches' | 'org' | 'holidays'>('company');
   const { data: c } = useQuery<any>({ queryKey: ['company'], queryFn: () => get('/company') });
   const { data: entities } = useQuery<any[]>({ queryKey: ['entities'], queryFn: () => get('/entities') });
   return (
     <>
       <PageHeader title="Company setup" sub={edit ? 'Everything the payroll engine needs before the first run' : 'Read-only for Payroll Managers'} />
-      <div className="mb-5"><Tabs value={tab} onChange={setTab} tabs={[{ id: 'company', label: 'Company & pay', icon: <Building2 className="h-4 w-4" /> }, { id: 'entities', label: 'Legal entities', icon: <Landmark className="h-4 w-4" /> }, { id: 'branches', label: 'Branches', icon: <MapPin className="h-4 w-4" /> }, { id: 'org', label: 'Departments & designations', icon: <Shapes className="h-4 w-4" /> }]} /></div>
+      <div className="mb-5"><Tabs value={tab} onChange={setTab} tabs={[{ id: 'company', label: 'Company & pay', icon: <Building2 className="h-4 w-4" /> }, { id: 'entities', label: 'Legal entities', icon: <Landmark className="h-4 w-4" /> }, { id: 'branches', label: 'Branches', icon: <MapPin className="h-4 w-4" /> }, { id: 'org', label: 'Departments & designations', icon: <Shapes className="h-4 w-4" /> }, { id: 'holidays', label: 'Holidays', icon: <CalendarDays className="h-4 w-4" /> }]} /></div>
       {tab === 'company' && (c ? <CompanyForm c={c} edit={edit} /> : <Skeleton className="h-96" />)}
       {tab === 'entities' && <MasterList path="entities" title="Legal entities" sub="Each entity has its own PAN, TAN, PF and ESI codes" canEdit={edit}
         fields={[{ k: 'name', label: 'Name' }, { k: 'pan', label: 'PAN', upper: true }, { k: 'tan', label: 'TAN', upper: true }, { k: 'pfCode', label: 'PF establishment code', upper: true }, { k: 'esiCode', label: 'ESI employer code' }]}
@@ -57,6 +58,9 @@ export default function Settings() {
         <MasterList path="departments" title="Departments" canEdit={edit} fields={[{ k: 'name', label: 'Name' }]} render={(r) => <span className="font-medium">{r.name}</span>} />
         <MasterList path="designations" title="Designations" canEdit={edit} fields={[{ k: 'name', label: 'Name' }]} render={(r) => <span className="font-medium">{r.name}</span>} />
       </div>}
+      {tab === 'holidays' && <MasterList path="holidays" title="Holiday calendar" sub="Holidays reduce working days on the attendance sheet. Blank state = all branches." canEdit={edit}
+        fields={[{ k: 'date', label: 'Date', type: 'date' }, { k: 'name', label: 'Name' }, { k: 'state', label: 'State code (optional)', upper: true, placeholder: 'MH' }, { k: 'restricted', label: 'Restricted (optional) holiday', type: 'bool' }]}
+        render={(r) => <div className="flex items-center gap-3"><span className="w-28 shrink-0 font-semibold">{date(r.date)}</span><span className="flex-1 truncate">{r.name}</span>{r.state && <Badge>{r.state}</Badge>}{r.restricted && <Badge tone="amber">restricted</Badge>}</div>} />}
       <p className="mt-6 flex items-center gap-2 text-xs text-muted"><Settings2 className="h-3.5 w-3.5" />Statutory rates (PF, ESI, PT, LWF, tax slabs) live in dated rules tables — see the API's /rules endpoints.</p>
     </>
   );
