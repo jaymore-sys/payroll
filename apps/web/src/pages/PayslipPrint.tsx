@@ -2,7 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { get } from '../lib/api';
-import { date, inr } from '../lib/format';
+import { date } from '../lib/format';
+
+const amt = (n: number) => Math.round(n).toLocaleString('en-IN');
 
 /** Indian-system amount in words: 1,70,386 → "One Lakh Seventy Thousand Three Hundred Eighty Six". */
 export function inWords(n: number): string {
@@ -23,47 +25,59 @@ export function inWords(n: number): string {
   return parts.join(' ');
 }
 
-/** Clean A4 payslip; opens the browser's print dialog so the employee can "Save as PDF". */
+/** A4 payslip in the company's format (Net = Gross − Deductions, Monthly vs Total columns); opens the print dialog for "Save as PDF". */
 export default function PayslipPrint() {
   const { id = '' } = useParams();
   const { data, error } = useQuery<any>({ queryKey: ['payslip', id], queryFn: () => get(`/payslips/${id}`) });
-  useEffect(() => { if (data) { document.title = `Payslip ${data.label} - ${data.employee.code}`; setTimeout(() => window.print(), 400); } }, [data]);
+  useEffect(() => { if (data) { document.title = `Payslip-${data.employee.firstName} ${data.employee.lastName}-${data.label}`; setTimeout(() => window.print(), 400); } }, [data]);
   if (error) return <p className="p-8">{(error as Error).message}</p>;
   if (!data) return <p className="p-8 text-sm">Preparing payslip…</p>;
   const p = data.payslip, e = data.employee;
-  const earn = p.lines.filter((l: any) => l.section === 'earning'), ded = p.lines.filter((l: any) => l.section === 'deduction');
-  const rows = Math.max(earn.length, ded.length);
-  return (
-    <div className="mx-auto max-w-[800px] bg-white p-8 text-[13px] text-slate-900 print:p-0">
-      <style>{'@page { size: A4; margin: 14mm } body { background: white !important } html { color-scheme: light }'}</style>
-      <div className="flex items-start justify-between border-b-2 border-indigo-600 pb-4">
-        <div><p className="text-xl font-extrabold">{data.company.name}</p>{data.company.address && <p className="text-slate-500">{data.company.address}</p>}</div>
-        <div className="text-right"><p className="text-xs font-bold uppercase tracking-wider text-indigo-600">Payslip</p><p className="text-lg font-bold">{data.label}</p></div>
-      </div>
-      <table className="mt-4 w-full text-left"><tbody>
-        {[[['Employee name', `${e.firstName} ${e.lastName}`], ['Employee code', e.code]], [['Designation', e.designation ?? '—'], ['Department', e.department ?? '—']], [['Date of joining', date(e.doj)], ['PAN', e.panLast4 ? `XXXXXX${e.panLast4}` : '—']], [['UAN', e.uan ?? '—'], ['Bank account', e.bankLast4 ? `XXXXXX${e.bankLast4}` : '—']], [['Days in month', p.daysInMonth], ['Payable days / LOP', `${p.payableDays} / ${p.lopDays}`]]].map((r, i) => (
-          <tr key={i}>{r.flatMap(([k, v]) => [<td key={`${k}k`} className="w-1/5 py-1 text-slate-500">{k}</td>, <td key={`${k}v`} className="w-[30%] py-1 font-semibold">{v}</td>])}</tr>))}
-      </tbody></table>
-      <table className="mt-5 w-full border border-slate-300 text-left">
-        <thead className="bg-indigo-50"><tr><th className="border-b border-slate-300 px-3 py-2">Earnings</th><th className="border-b border-r border-slate-300 px-3 py-2 text-right">Amount (₹)</th><th className="border-b border-slate-300 px-3 py-2">Deductions</th><th className="border-b border-slate-300 px-3 py-2 text-right">Amount (₹)</th></tr></thead>
-        <tbody>{Array.from({ length: rows }).map((_, i) => (
-          <tr key={i}><td className="px-3 py-1.5">{earn[i]?.label ?? ''}</td><td className="border-r border-slate-300 px-3 py-1.5 text-right tabular-nums">{earn[i] ? inr(earn[i].amount).replace('₹', '') : ''}</td>
-            <td className="px-3 py-1.5">{ded[i]?.label ?? ''}</td><td className="px-3 py-1.5 text-right tabular-nums">{ded[i] ? inr(ded[i].amount).replace('₹', '') : ''}</td></tr>))}
-          <tr className="border-t border-slate-300 bg-slate-50 font-bold"><td className="px-3 py-2">Gross earnings</td><td className="border-r border-slate-300 px-3 py-2 text-right">{inr(p.gross).replace('₹', '')}</td><td className="px-3 py-2">Total deductions</td><td className="px-3 py-2 text-right">{inr(p.deductions.total).replace('₹', '')}</td></tr>
-        </tbody>
+  const earnings: { name: string; full: number; amount: number }[] = p.earnings;
+  const extras = p.lines.filter((l: any) => l.section === 'earning' && !earnings.some((x) => x.name === l.label));
+  const ded = p.lines.filter((l: any) => l.section === 'deduction');
+  const lopAmount = earnings.reduce((s, x) => s + x.full - x.amount, 0);
+  const info: [string, string | number | null][] = [
+    ['Employee Code', e.code], ['Name', `${e.firstName} ${e.lastName}`], ['Designation', e.designation], ['Date of birth', e.dob ? date(e.dob) : null],
+    ['PAN', e.panLast4 ? `XXXXXX${e.panLast4}` : null], ['UAN', e.uan], ['Account no.', e.bankLast4 ? `XXXXXX${e.bankLast4}` : null], ['IFSC code', e.ifsc],
+    ['Date of joining', date(e.doj)], ['Payable Days', p.payableDays], ['LOP Days', p.lopDays || null], ['Regime Opted', p.tax.regime === 'old' ? 'Old Regime' : 'New Regime'],
+  ];
+  const Table = ({ head, rows, total, totalLabel, note }: { head: string; rows: [string, number, number][]; total: number; totalLabel: string; note?: string }) => (
+    <div>
+      <table className="w-full text-left">
+        <thead><tr className="border-b border-slate-300 text-slate-500"><th className="py-2 font-semibold">{head}</th><th className="py-2 text-right font-semibold">Monthly</th><th className="py-2 text-right font-semibold">Total Amount</th></tr></thead>
+        <tbody>{rows.map(([l, m, t]) => <tr key={l} className="border-b border-slate-100"><td className="py-1.5">{l}</td><td className="py-1.5 text-right tabular-nums">{amt(m)}</td><td className="py-1.5 text-right tabular-nums">{amt(t)}</td></tr>)}</tbody>
       </table>
-      <div className="mt-4 flex items-center justify-between rounded-lg bg-indigo-600 px-4 py-3 text-white"><span className="font-semibold">Net pay (in-hand)</span><span className="text-xl font-extrabold">{inr(p.net)}</span></div>
-      <p className="mt-2 text-slate-600">In words: <b>Rupees {inWords(p.net)} Only</b></p>
-      <div className="mt-5 grid grid-cols-2 gap-6 text-[12px]">
-        <div><p className="mb-1 font-bold text-slate-500">TDS summary ({p.tax.regime} regime)</p>
-          <p className="flex justify-between"><span>Projected taxable income</span><span>{inr(p.tax.projectedTaxable)}</span></p>
-          <p className="flex justify-between"><span>Tax for the year</span><span>{inr(p.tax.annualTax)}</span></p>
-          <p className="flex justify-between"><span>Deducted before this month</span><span>{inr(p.tax.paidSoFar)}</span></p>
-          <p className="flex justify-between font-bold"><span>Deducted this month</span><span>{inr(p.tax.thisMonth)}</span></p></div>
-        <div><p className="mb-1 font-bold text-slate-500">Employer contributions (not part of in-hand)</p>
-          {p.lines.filter((l: any) => l.section === 'employer').map((l: any) => <p key={l.label} className="flex justify-between"><span>{l.label}</span><span>{inr(l.amount)}</span></p>)}</div>
+      <div className="mt-1 flex justify-end gap-10 py-1.5 font-bold"><span>{totalLabel}</span><span className="w-24 text-right tabular-nums">{amt(total)}</span></div>
+      {note && <p className="text-[11px] text-slate-500">{note}</p>}
+    </div>
+  );
+  return (
+    <div className="mx-auto max-w-[820px] bg-white p-8 text-[13px] text-slate-900 print:p-0">
+      <style>{'@page { size: A4; margin: 12mm } body { background: white !important } html { color-scheme: light }'}</style>
+      <div className="flex items-start justify-between">
+        <div><p className="text-xl font-extrabold uppercase">{data.company.name}</p>{data.company.address && <p className="text-slate-500">{data.company.address}</p>}</div>
+        <p className="font-semibold text-slate-600">Payslip: {new Date(`${data.month}-01T00:00`).toLocaleString('en-IN', { month: 'short', year: 'numeric' })}</p>
       </div>
-      <p className="mt-8 border-t border-slate-200 pt-3 text-center text-[11px] text-slate-400">This is a computer-generated payslip and does not need a signature.</p>
+      <div className="mt-5 flex items-end gap-6 rounded-lg bg-slate-50 px-5 py-4">
+        <div><p className="text-xs text-slate-500">Net Pay</p><p className="text-3xl font-extrabold">{amt(p.net)}</p></div>
+        <span className="pb-1 text-xl text-slate-400">=</span>
+        <div><p className="text-xs text-slate-500">Gross Pay (A)</p><p className="text-lg font-bold">+ {amt(p.gross)}</p></div>
+        <div><p className="text-xs text-slate-500">Deductions (B)</p><p className="text-lg font-bold">− {amt(p.deductions.total)}</p></div>
+      </div>
+      <div className="mt-5 grid grid-cols-[190px_1fr] gap-6">
+        <dl className="space-y-2.5 border-r border-slate-200 pr-4">{info.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => <div key={k}><dt className="text-[11px] text-slate-500">{k}</dt><dd className="font-semibold">{v}</dd></div>)}</dl>
+        <div className="space-y-6">
+          <div><p className="mb-1 font-bold">Gross Pay (A) <span className="font-normal text-slate-500">The total money you earned before the deductions</span></p>
+            <Table head="Earnings" totalLabel={lopAmount > 0 ? 'Gross Pay *' : 'Gross Pay'} total={p.gross}
+              rows={[...earnings.map((x) => [x.name, x.full, x.amount] as [string, number, number]), ...extras.map((l: any) => [l.label, l.amount, l.amount] as [string, number, number])]}
+              note={lopAmount > 0 ? `* Loss of pay amount deducted from actual gross pay is ${amt(lopAmount)}` : undefined} /></div>
+          <div><p className="mb-1 font-bold">Deductions (B) <span className="font-normal text-slate-500">The amount deducted for taxes and other benefits</span></p>
+            <Table head="Deductions" totalLabel="Total Deductions" total={p.deductions.total} rows={ded.map((l: any) => [l.label === 'Provident fund' ? 'Employee PF Contribution' : l.label, l.amount, l.amount])} /></div>
+          <p className="text-slate-600">Net pay in words: <b>Rupees {inWords(p.net)} Only</b></p>
+        </div>
+      </div>
+      <p className="mt-10 border-t border-slate-200 pt-3 text-center text-[11px] text-slate-400">This is a computer generated payslip and does not require a signature</p>
     </div>
   );
 }

@@ -60,8 +60,8 @@ describe('statutory engine (spec §6)', () => {
     const s = computeStatutory(emp, m, SR);
     expect(s.pf).toMatchObject({ pfWage: 15000, employee: 1800, eps: 1250, epf: 550, edli: 75 });
   });
-  it('PF ceiling ₹25,000 from October 2026 wages: ₹3,000 employee, EPS ₹2,083', () => {
-    expect(computeStatutory(emp, { ...m, month: '2026-09' }, SR).pf).toMatchObject({ employee: 1800 }); // notified 17 Sep
+  it('PF ceiling ₹25,000 from September 2026 wages: ₹3,000 employee, EPS ₹2,083', () => {
+    expect(computeStatutory(emp, { ...m, month: '2026-08' }, SR).pf).toMatchObject({ employee: 1800 });
     expect(computeStatutory(emp, { ...m, month: '2026-10' }, SR).pf).toMatchObject({ pfWage: 25000, employee: 3000, eps: 2083, epf: 917, edli: 125 });
     expect(computeStatutory(emp, { ...m, month: '2026-10', pfWage: 20000 }, SR).pf).toMatchObject({ employee: 2400 }); // 12% of actual wage below the ceiling
   });
@@ -119,11 +119,11 @@ describe('CTC split (spec §5)', () => {
     expect(r.components.find((c) => c.code === 'HRA')!.monthly).toBe(Math.round(basic * 0.5));
     expect(r.deemedWages).toBe(0);
   });
-  it('low CTC picks up ESI; non-metro HRA 40%', () => {
+  it('low CTC picks up ESI; HRA 25% of gross everywhere', () => {
     const r = splitCtc({ annualCtc: 240000, metro: false, pfCapMode: 'capped', state: 'MH' });
     expect(r.employer.esi).toBeGreaterThan(0);
     const basic = r.components.find((c) => c.code === 'BASIC')!.monthly;
-    expect(r.components.find((c) => c.code === 'HRA')!.monthly).toBe(Math.round(basic * 0.4));
+    expect(r.components.find((c) => c.code === 'HRA')!.monthly).toBe(Math.round(r.monthlyGross * 0.25)); void basic;
     expect(Math.abs(r.checkCtc - 240000)).toBeLessThanOrEqual(12);
   });
   it('50% wage rule adds deemed wages when basic is too low', () => {

@@ -38,7 +38,13 @@ export function PayslipBody({ p }: { p: any }) {
         {[['Payable days', `${p.payableDays} / ${p.daysInMonth}`], ['LOP days', p.lopDays], ['Regime', p.tax.regime]].map(([l, v]) => <div key={l as string} className="rounded-xl bg-surface-2 p-3"><p className="text-[11px] font-semibold uppercase text-muted">{l}</p><p className="font-bold capitalize">{v}</p></div>)}
       </div>
       <div className="grid gap-3 md:grid-cols-2">
-        <Col title="Earnings" rows={sec('earning')} total={p.gross} />
+        <div className="rounded-2xl bg-surface-2/60 p-4">
+          <div className="mb-2 grid grid-cols-[1fr_80px_90px] text-xs font-bold uppercase text-muted"><span>Earnings</span><span className="text-right">Monthly</span><span className="text-right">This month</span></div>
+          {[...p.earnings.map((x: any) => [x.name, x.full, x.amount]), ...sec('earning').filter((l: any) => !p.earnings.some((x: any) => x.name === l.label)).map((l: any) => [l.label, l.amount, l.amount])].map(([l, m, t]: any, i: number) => (
+            <motion.div key={l} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.03 }} className="grid grid-cols-[1fr_80px_90px] py-1 text-sm"><span>{l}</span><span className="text-right tabular-nums text-muted">{inr(m)}</span><span className="text-right tabular-nums">{inr(t)}</span></motion.div>))}
+          <div className="mt-2 flex justify-between border-t border-line pt-2 text-sm font-bold"><span>Gross pay</span><span>{inr(p.gross)}</span></div>
+          {p.lopDays > 0 && <p className="mt-1 text-xs text-muted">Loss of pay deducted from actual gross: {inr(p.earnings.reduce((s: number, x: any) => s + x.full - x.amount, 0))}</p>}
+        </div>
         <Col title="Deductions" rows={sec('deduction')} total={p.deductions.total} tone="text-bad" />
       </div>
       <motion.div initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="gradient-brand flex items-center justify-between rounded-2xl p-5 text-white">

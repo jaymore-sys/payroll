@@ -89,3 +89,23 @@ describe('computePayslip (spec §10.2)', () => {
     expect(p.deductions.tds).toBe(0);
   });
 });
+
+describe('company payslip format (September 2026 payslips)', () => {
+  const sep = (gross: number, lopDays = 0) => {
+    const st = splitCtc({ annualCtc: 0, monthlyGross: gross, metro: true, pfCapMode: 'capped', state: 'MH', asOf: '2026-09' });
+    return computePayslip({ month: '2026-09', components: st.components, deemedWages: st.deemedWages, lopDays, employee: { ...emp, doj: '2025-06-18', metro: true } }, SR, TR);
+  };
+  it('₹30,000 gross: Basic 50%, HRA 25%, LTA 10%, Special 15%; PF on gross − HRA; net 27,100', () => {
+    const p = sep(30000);
+    expect(p.earnings.map((e) => [e.name, e.amount])).toEqual([['Basic', 15000], ['House Rent Allowance', 7500], ['Leave & Travel Allowance', 3000], ['Special Allowance', 4500]]);
+    expect(p.deductions).toMatchObject({ pf: 2700, pt: 200, tds: 0, esi: 0, total: 2900 });
+    expect(p.net).toBe(27100);
+  });
+  it('₹37,500 gross with 3 LOP days: gross 33,751, PF capped at ₹3,000, net 30,551', () => {
+    const p = sep(37500, 3);
+    expect(p.earnings.map((e) => e.amount)).toEqual([16875, 8438, 3375, 5063]);
+    expect(p.gross).toBe(33751);
+    expect(p.deductions).toMatchObject({ pf: 3000, pt: 200, total: 3200 });
+    expect(p.net).toBe(30551);
+  });
+});

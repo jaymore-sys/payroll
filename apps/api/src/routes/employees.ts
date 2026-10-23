@@ -35,7 +35,7 @@ const payFields = {
   esiIp: z.string().regex(/^\d{10}$/, 'ESI IP must be 10 digits').nullish().or(z.literal('').transform(() => null)),
   pfOptOut: z.boolean(), international: z.boolean(), taxRegime: z.enum(['new', 'old']), metro: z.boolean(),
 };
-const createSchema = z.object({ ...personal, ...payFields, code: z.string().regex(/^[A-Z0-9-]{2,20}$/).optional(), createLogin: z.boolean().default(false), annualCtc: z.number().positive().max(1e9).optional() })
+const createSchema = z.object({ ...personal, ...payFields, code: z.string().regex(/^[A-Z0-9-]{2,20}$/).optional(), createLogin: z.boolean().default(false), annualCtc: z.number().positive().max(1e9).optional(), monthlyGross: z.number().positive().max(1e8).optional() })
   .partial({ pfOptOut: true, international: true, taxRegime: true, metro: true, noticeDays: true, employmentType: true });
 
 /** Encrypt sensitive inputs; only last-4 is kept in clear for masked display. Full Aadhaar is never stored. */
@@ -140,12 +140,14 @@ async function salaryFor(cid: string, empId: string) {
   return { e: e.row, state: e.state ?? 'MH', metro: e.row.metro || !!e.branchMetro, company: c };
 }
 
-export async function createRevision(req: any, empId: string, annualCtc: number, annualVariable: number, effectiveFrom: string) {
+/** pay: monthly gross (how the company sets salaries) or annual CTC. */
+export async function createRevision(req: any, empId: string, pay: { annualCtc?: number; monthlyGross?: number }, annualVariable: number, effectiveFrom: string) {
   const cid = req.user.cid;
   const { e, state, metro, company } = await salaryFor(cid, empId);
   const { stat, tax } = await loadRules();
   const age = e.dob ? new Date(effectiveFrom).getFullYear() - new Date(e.dob).getFullYear() : 30;
-  const preview = splitCtc({ annualCtc, annualVariable, metro, state, pfCapMode: company.pfCapMode as 'capped' | 'actual', gender: e.gender === 'F' ? 'F' : 'M', age, doj: e.doj, asOf: effectiveFrom.slice(0, 7), labourCodeMode: company.labourCodeMode }, stat, tax);
+  const preview = splitCtc({ annualCtc: pay.annualCtc ?? 0, monthlyGross: pay.monthlyGross, annualVariable, metro, state, pfCapMode: company.pfCapMode as 'capped' | 'actual', gender: e.gender === 'F' ? 'F' : 'M', age, doj: e.doj, asOf: effectiveFrom.slice(0, 7), labourCodeMode: company.labourCodeMode }, stat, tax);
+  const annualCtc = pay.monthlyGross ? preview.checkCtc : pay.annualCtc!;
   return db.transaction(async (tx) => {
     const dayBefore = new Date(new Date(effectiveFrom).getTime() - 864e5).toISOString().slice(0, 10);
     const [prev] = await tx.select().from(S).where(and(eq(S.companyId, cid), eq(S.employeeId, empId), isNull(S.effectiveTo))).orderBy(desc(S.effectiveFrom)).limit(1);
@@ -168,7 +170,7 @@ employeesRouter.post('/employees', requireRole('COMPANY_ADMIN'), h(async (req, r
   const cid = req.user!.cid;
   await assertRefs(cid, d);
   const code = d.code ?? (await nextCode(cid));
-  const { pan, bank, aadhaar, createLogin, annualCtc, code: _c, ...rest } = d;
+  const { pan, bank, aadhaar, createLogin, annualCtc, monthlyGross, code: _c, ...rest } = d;
   const [row] = await db.insert(E).values({ ...rest, code, companyId: cid, createdBy: req.user!.sub, ...sensitiveColumns({ pan, bank, aadhaar }) } as typeof E.$inferInsert).returning();
   await creditJoinerLeave(cid, row.id, row.doj, row.gender, req.user!.sub);
   let tempPassword: string | undefined;
@@ -176,7 +178,7 @@ employeesRouter.post('/employees', requireRole('COMPANY_ADMIN'), h(async (req, r
     tempPassword = `Pp-${randomToken(9)}1a`;
     await db.insert(schema.users).values({ companyId: cid, email: row.workEmail, passwordHash: await hashPassword(tempPassword), roles: ['EMPLOYEE'], employeeId: row.id });
   }
-  if (annualCtc) await createRevision(req, row.id, annualCtc, 0, row.doj);
+  if (monthlyGross || annualCtc) await createRevision(req, row.id, { monthlyGross, annualCtc }, 0, row.doj);
   await audit(req, 'create', 'employee', row.id, undefined, { ...row, panEnc: undefined, bankEnc: undefined });
   res.status(201).json({ id: row.id, code: row.code, tempPassword });
 }));
@@ -218,6 +220,7 @@ const importRow = z.object({
   pan: PAN.optional().or(z.literal('').transform(() => undefined)), ifsc: IFSC.optional().or(z.literal('').transform(() => undefined)),
   accountNumber: z.string().regex(/^\d{6,18}$/).optional().or(z.literal('').transform(() => undefined)),
   annualCtc: z.coerce.number().positive().optional().or(z.literal('').transform(() => undefined)),
+  monthlyGross: z.coerce.number().positive().optional().or(z.literal('').transform(() => undefined)),
 });
 employeesRouter.post('/employees/import', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const { rows, dryRun } = parse(z.object({ rows: z.array(z.record(z.unknown())).min(1).max(2000), dryRun: z.boolean().default(true) }), req.body);
@@ -262,7 +265,7 @@ employeesRouter.post('/employees/import', requireRole('COMPANY_ADMIN'), h(async 
       ...sensitiveColumns({ pan: d.pan, bank: d.accountNumber ? { holder: `${d.firstName} ${d.lastName}`, account: d.accountNumber, ifsc: d.ifsc! } : undefined }),
     }).returning();
     await creditJoinerLeave(cid, row.id, row.doj, row.gender, req.user!.sub);
-    if (d.annualCtc) await createRevision(req, row.id, d.annualCtc, 0, row.doj);
+    if (d.monthlyGross || d.annualCtc) await createRevision(req, row.id, { monthlyGross: d.monthlyGross, annualCtc: d.annualCtc }, 0, row.doj);
     created.push(row.id);
   }
   await audit(req, 'import', 'employee', null, undefined, { count: created.length });
@@ -270,7 +273,8 @@ employeesRouter.post('/employees/import', requireRole('COMPANY_ADMIN'), h(async 
 }));
 
 /* ---------------- salary ---------------- */
-const ctcInput = z.object({ annualCtc: z.number().positive().max(1e9), annualVariable: z.number().min(0).max(1e9).default(0), metro: z.boolean().default(true), state: z.string().regex(/^[A-Z]{2}$/).default('MH'), gender: z.enum(['M', 'F']).default('M'), age: z.number().int().min(14).max(100).default(30), pfCapMode: z.enum(['capped', 'actual']).optional() });
+const ctcInput = z.object({ annualCtc: z.number().min(0).max(1e9).default(0), monthlyGross: z.number().positive().max(1e8).optional(), annualVariable: z.number().min(0).max(1e9).default(0), metro: z.boolean().default(true), state: z.string().regex(/^[A-Z]{2}$/).default('MH'), gender: z.enum(['M', 'F']).default('M'), age: z.number().int().min(14).max(100).default(30), pfCapMode: z.enum(['capped', 'actual']).optional() })
+  .refine((d) => d.monthlyGross || d.annualCtc > 0, 'Enter the monthly gross or annual CTC');
 employeesRouter.post('/ctc/preview', requireRole('COMPANY_ADMIN', 'PAYROLL_MANAGER'), h(async (req, res) => {
   const d = parse(ctcInput, req.body);
   const [c] = await db.select().from(schema.companies).where(eq(schema.companies.id, req.user!.cid));
@@ -282,8 +286,9 @@ employeesRouter.post('/ctc/preview', requireRole('COMPANY_ADMIN', 'PAYROLL_MANAG
 
 employeesRouter.post('/employees/:id/salary-revisions', requireRole('COMPANY_ADMIN', 'PAYROLL_MANAGER'), h(async (req, res) => {
   await employeeAccess(req, req.params.id);
-  const d = parse(z.object({ annualCtc: z.number().positive().max(1e9), annualVariable: z.number().min(0).default(0), effectiveFrom: z.string().date() }), req.body);
-  res.status(201).json(await createRevision(req, req.params.id, d.annualCtc, d.annualVariable, d.effectiveFrom));
+  const d = parse(z.object({ annualCtc: z.number().positive().max(1e9).optional(), monthlyGross: z.number().positive().max(1e8).optional(), annualVariable: z.number().min(0).default(0), effectiveFrom: z.string().date() })
+    .refine((x) => x.monthlyGross || x.annualCtc, 'Enter the monthly gross'), req.body);
+  res.status(201).json(await createRevision(req, req.params.id, { monthlyGross: d.monthlyGross, annualCtc: d.annualCtc }, d.annualVariable, d.effectiveFrom));
 }));
 
 employeesRouter.get('/employees/:id/salary-structures', h(async (req, res) => {

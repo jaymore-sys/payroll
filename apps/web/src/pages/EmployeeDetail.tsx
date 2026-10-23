@@ -56,15 +56,15 @@ function ReviseModal({ e, open, onClose }: { e: any; open: boolean; onClose: () 
   const [ctc, setCtc] = useState('');
   const [eff, setEff] = useState(today());
   const dctc = useDebounced(Number(ctc), 400);
-  const { data: preview, error } = useQuery<any>({ queryKey: ['ctc-preview', dctc, e.metro, e.state, e.gender], queryFn: () => post('/ctc/preview', { annualCtc: dctc, metro: !!e.metro, state: e.state ?? 'MH', gender: e.gender === 'F' ? 'F' : 'M' }), enabled: dctc > 50000 });
-  const act = useAct(() => post(`/employees/${e.id}/salary-revisions`, { annualCtc: Number(ctc), effectiveFrom: eff }), { success: 'Salary revised', invalidate: [['structures', e.id], ['dashboard']], onDone: onClose });
+  const { data: preview, error } = useQuery<any>({ queryKey: ['ctc-preview', dctc, e.metro, e.state, e.gender], queryFn: () => post('/ctc/preview', { monthlyGross: dctc, metro: !!e.metro, state: e.state ?? 'MH', gender: e.gender === 'F' ? 'F' : 'M' }), enabled: dctc >= 1000 });
+  const act = useAct(() => post(`/employees/${e.id}/salary-revisions`, { monthlyGross: Number(ctc), effectiveFrom: eff }), { success: 'Salary revised', invalidate: [['structures', e.id], ['dashboard']], onDone: onClose });
   return (
     <Modal open={open} onClose={onClose} title="Revise salary" wide footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button disabled={!preview} loading={act.isPending} onClick={() => act.mutate()}>Save revision</Button></>}>
       <div className="mb-5 grid gap-4 sm:grid-cols-2">
-        <Field label="New annual CTC (₹)"><Input inputMode="numeric" autoFocus value={ctc} onChange={(x) => setCtc(x.target.value.replace(/\D/g, ''))} placeholder="e.g. 1200000" /></Field>
+        <Field label="New monthly gross (₹)" hint="Split: Basic 50% · HRA 25% · LTA 10% · Special 15%"><Input inputMode="numeric" autoFocus value={ctc} onChange={(x) => setCtc(x.target.value.replace(/\D/g, ''))} placeholder="e.g. 30000" /></Field>
         <Field label="Effective from" hint="Backdated revisions create arrears in the next payroll run"><Input type="date" value={eff} onChange={(x) => setEff(x.target.value)} /></Field>
       </div>
-      {error ? <p className="text-sm text-bad">{(error as Error).message}</p> : preview ? <Breakup p={preview} compact /> : <p className="py-8 text-center text-sm text-muted">Enter a CTC to see the live breakup</p>}
+      {error ? <p className="text-sm text-bad">{(error as Error).message}</p> : preview ? <Breakup p={preview} compact /> : <p className="py-8 text-center text-sm text-muted">Enter the monthly gross to see the breakup</p>}
     </Modal>
   );
 }

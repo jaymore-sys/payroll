@@ -98,7 +98,7 @@ function AdminDash({ a, d }: { a: any; d: any }) {
           <CardTitle>Quick links</CardTitle>
           <div className="grid grid-cols-3 gap-2.5">
             <QuickLink i={0} to="/payroll" icon={<Banknote className="h-5 w-5" />} label="Run payroll" />
-            <QuickLink i={1} to="/ctc" icon={<Wallet className="h-5 w-5" />} label="CTC builder" />
+            <QuickLink i={1} to="/ctc" icon={<Wallet className="h-5 w-5" />} label="Salary builder" />
             <QuickLink i={2} to="/tax" icon={<Calculator className="h-5 w-5" />} label="Tax calc" />
             <QuickLink i={3} to="/approvals" icon={<CalendarCheck className="h-5 w-5" />} label="Approvals" />
             <QuickLink i={4} to="/attendance" icon={<CalendarDays className="h-5 w-5" />} label="Attendance" />

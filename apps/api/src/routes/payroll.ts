@@ -275,8 +275,9 @@ payrollRouter.get('/payslips/:id', h(async (req, res) => {
   if (!p) throw notFound('Payslip');
   const admin = hasRole(req.user, ...ADMIN);
   if (!admin && (p.slip.employeeId !== req.user!.eid || p.status !== 'FINALISED')) throw notFound('Payslip');
-  const [e] = await db.select({ code: E.code, firstName: E.firstName, lastName: E.lastName, panLast4: E.panLast4, uan: E.uan, bankLast4: E.bankLast4, doj: E.doj, designation: schema.designations.name, department: schema.departments.name })
+  const [{ bankEnc, ...e }] = await db.select({ code: E.code, firstName: E.firstName, lastName: E.lastName, panLast4: E.panLast4, uan: E.uan, bankLast4: E.bankLast4, bankEnc: E.bankEnc, doj: E.doj, dob: E.dob, taxRegime: E.taxRegime, designation: schema.designations.name, department: schema.departments.name })
     .from(E).leftJoin(schema.designations, eq(schema.designations.id, E.designationId)).leftJoin(schema.departments, eq(schema.departments.id, E.departmentId)).where(eq(E.id, p.slip.employeeId));
   const [c] = await db.select({ name: schema.companies.legalName, display: schema.companies.name, address: schema.companies.address }).from(schema.companies).where(eq(schema.companies.id, req.user!.cid));
-  res.json({ id: p.slip.id, month: p.slip.month, label: monthLabel(p.slip.month), status: p.status, employee: e, company: { name: c.name ?? c.display, address: c.address }, payslip: p.slip.detail });
+  const ifsc = bankEnc ? decryptJson<{ ifsc: string }>(bankEnc).ifsc : null; // IFSC only; account and PAN stay masked
+  res.json({ id: p.slip.id, month: p.slip.month, label: monthLabel(p.slip.month), status: p.status, employee: { ...e, ifsc }, company: { name: c.name ?? c.display, address: c.address }, payslip: p.slip.detail });
 }));

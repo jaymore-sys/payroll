@@ -19,7 +19,7 @@ export async function ensureSeeded(password: string) {
 export async function seedRules() {
   for (const r of STATUTORY_RULES) {
     await db.insert(schema.statutoryRules).values({ ruleKey: r.id, ruleType: r.ruleType, state: r.state, effectiveFrom: r.effectiveFrom, effectiveTo: r.effectiveTo, params: r.params, sourceNote: r.sourceNote })
-      .onConflictDoUpdate({ target: schema.statutoryRules.ruleKey, set: { effectiveTo: r.effectiveTo, params: r.params, sourceNote: r.sourceNote } }); // law changes reach existing databases
+      .onConflictDoUpdate({ target: schema.statutoryRules.ruleKey, set: { effectiveFrom: r.effectiveFrom, effectiveTo: r.effectiveTo, params: r.params, sourceNote: r.sourceNote } }); // law changes reach existing databases
   }
   for (const t of TAX_RULES) await db.insert(schema.taxRules).values({ taxYear: t.taxYear, regime: t.regime, ageBand: t.ageBand, data: t }).onConflictDoNothing();
 }
@@ -77,10 +77,10 @@ export async function seedCompany(name: string, emailDomain: string, password: s
     }).returning();
     ids.push(e.id);
     await creditJoinerLeave(cid, e.id, `${now.getUTCFullYear()}-01-01`, g);
-    await createRevision(fakeReq, e.id, lakh * 100000, 0, doj);
+    await createRevision(fakeReq, e.id, { annualCtc: lakh * 100000 }, 0, doj);
   }
   // Recent joiners for the trend chart and a pending revision history entry.
-  if (ids[2]) await createRevision(fakeReq, ids[2], 21 * 100000, 0, `${now.getUTCFullYear()}-04-01`);
+  if (ids[2]) await createRevision(fakeReq, ids[2], { annualCtc: 21 * 100000 }, 0, `${now.getUTCFullYear()}-04-01`);
 
   const pw = await hashPassword(password);
   await db.insert(schema.users).values([
