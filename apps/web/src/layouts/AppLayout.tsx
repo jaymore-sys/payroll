@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Banknote, Bell, Building2, Calculator, CalendarCheck2, CheckCheck, ChevronsLeft, ClipboardCheck, FileClock, LayoutDashboard, LogOut, Menu, Moon, ReceiptText, ShieldCheck, Sun, UserCircle2, Users, Wallet, X,
+  Banknote, Bell, Briefcase, Building2, Calculator, CalendarCheck2, CheckCheck, ChevronsLeft, ClipboardCheck, FileClock, LayoutDashboard, LogOut, Menu, Moon, ReceiptText, ShieldCheck, Sun, UserCircle2, Users, Wallet, X,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
@@ -18,6 +18,7 @@ const NAV: Nav[] = [
   { to: '/', label: 'Dashboard', icon: <LayoutDashboard className="h-[18px] w-[18px]" />, section: 'main' },
   { to: '/employees', label: 'People', icon: <Users className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN', 'PAYROLL_MANAGER', 'REPORTING_MANAGER'], section: 'main' },
   { to: '/payroll', label: 'Run payroll', icon: <Banknote className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN', 'PAYROLL_MANAGER'], section: 'main' },
+  { to: '/consultants', label: 'Consultant payments', icon: <Briefcase className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN', 'PAYROLL_MANAGER'], section: 'main' },
   { to: '/attendance', label: 'Attendance', icon: <CalendarCheck2 className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN', 'PAYROLL_MANAGER', 'REPORTING_MANAGER'], section: 'main' },
   { to: '/payslips', label: 'My payslips', icon: <ReceiptText className="h-[18px] w-[18px]" />, needsEmployee: true, section: 'main' },
   { to: '/approvals', label: 'Profile requests', icon: <ClipboardCheck className="h-[18px] w-[18px]" />, roles: ['COMPANY_ADMIN'], section: 'admin' },

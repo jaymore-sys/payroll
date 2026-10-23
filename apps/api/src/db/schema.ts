@@ -277,3 +277,42 @@ export const attendanceMonths = pgTable('attendance_month', {
   enteredBy: uuid('entered_by'),
   ...stamps,
 }, (t) => [uniqueIndex().on(t.companyId, t.employeeId, t.month), index().on(t.companyId, t.month)]);
+
+/* ---------- Consultants: fixed monthly fee, cut for leave, TDS on professional fees (no PF/ESI/PT) ---------- */
+export const consultants = pgTable('consultant', {
+  id: id(), companyId: companyId(),
+  code: text('code'),
+  name: text('name').notNull(),
+  email: text('email'),
+  panEnc: text('pan_enc'), panLast4: text('pan_last4'),
+  bankEnc: text('bank_enc'), bankLast4: text('bank_last4'),
+  monthlyFee: money('monthly_fee').notNull(),
+  tdsRate: numeric('tds_rate', { precision: 5, scale: 4 }).notNull().default('0.1'), // 10% professional fees; 2% technical services
+  startDate: date('start_date').notNull(),
+  endDate: date('end_date'),
+  active: boolean('active').notNull().default(true),
+  ...stamps,
+}, (t) => [index().on(t.companyId)]);
+
+export const consultantRuns = pgTable('consultant_run', {
+  id: id(), companyId: companyId(),
+  month: text('month').notNull(),
+  status: runStatusEnum('status').notNull().default('DRAFT'),
+  totals: jsonb('totals'),
+  calculatedAt: timestamp('calculated_at', { withTimezone: true }),
+  approvedAt: timestamp('approved_at', { withTimezone: true }), approvedBy: uuid('approved_by'),
+  createdBy: uuid('created_by'), ...stamps,
+}, (t) => [uniqueIndex().on(t.companyId, t.month)]);
+
+export const consultantPayments = pgTable('consultant_payment', {
+  id: id(), companyId: companyId(),
+  runId: uuid('run_id').notNull().references(() => consultantRuns.id, { onDelete: 'cascade' }),
+  consultantId: uuid('consultant_id').notNull().references(() => consultants.id),
+  fee: money('fee').notNull(),
+  daysInMonth: integer('days_in_month').notNull(),
+  lopDays: numeric('lop_days', { precision: 5, scale: 1 }).notNull().default('0'),
+  adjustment: money('adjustment').notNull().default('0'), // one-off additions (+) or recoveries (−)
+  amount: money('amount'), tds: money('tds'), net: money('net'),
+  note: text('note'),
+  ...stamps,
+}, (t) => [uniqueIndex().on(t.runId, t.consultantId)]);

@@ -13,6 +13,7 @@ import { leaveRouter } from './routes/leave';
 import { miscRouter } from './routes/misc';
 import { payrollRouter } from './routes/payroll';
 import { attendanceRouter } from './routes/attendance';
+import { consultantsRouter } from './routes/consultants';
 
 export const app = express();
 app.disable('x-powered-by');
@@ -27,6 +28,6 @@ app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'no-store'); nex
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/v1/auth', authRouter);
-app.use('/api/v1', requireAuth, companyRouter, employeesRouter, leaveRouter, miscRouter, payrollRouter, attendanceRouter);
+app.use('/api/v1', requireAuth, companyRouter, employeesRouter, leaveRouter, miscRouter, payrollRouter, attendanceRouter, consultantsRouter);
 app.use('/api', (_req, _res, next) => next(new ApiError(404, 'not_found', 'Route not found')));
 app.use(errorHandler);

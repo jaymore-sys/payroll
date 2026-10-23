@@ -29,6 +29,13 @@
       "when": 1792674309312,
       "tag": "0003_attendance",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792761433924,
+      "tag": "0004_consultants",
+      "breakpoints": true
     }
   ]
 }

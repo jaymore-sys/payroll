@@ -164,7 +164,7 @@ function gridRows(wb: ExcelJS.Workbook) {
 }
 
 /** Rows from an uploaded .xlsx: first sheet; the header row is the first of the top 10 rows with an employee-code column. */
-async function rowsFromXlsx(b64: string) {
+export async function rowsFromXlsx(b64: string) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(Buffer.from(b64, 'base64') as unknown as ArrayBuffer);
   const grid = gridRows(wb);
