@@ -15,7 +15,9 @@
     "build": "npm run build -w @payrollpro/web",
     "db:migrate": "npm run db:migrate -w @payrollpro/api",
     "db:seed": "npm run db:seed -w @payrollpro/api",
-    "fresh": "npm run fresh -w @payrollpro/api --"
+    "fresh": "npm run fresh -w @payrollpro/api --",
+    "start": "npm start -w @payrollpro/api",
+    "export:sqlite": "npm run export:sqlite -w @payrollpro/api"
   },
   "engines": {
     "node": ">=20"

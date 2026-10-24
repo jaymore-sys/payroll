@@ -25,13 +25,11 @@ const password = values.password ?? `Pp-${randomBytes(9).toString('base64url')}9
 const dbDir = process.env.PGLITE_DIR ?? `${DATA_DIR}/db`;
 if (existsSync(dbDir)) rmSync(dbDir, { recursive: true, force: true }); // must happen before the db module opens it
 
-const { closeDb, db, migrateDb, schema } = await import('./index');
-const { seedRules } = await import('./seed');
-const { hashPassword } = await import('../lib/auth');
+const { closeDb, migrateDb } = await import('./index');
+const { seedRules, createCompany } = await import('./seed');
 
 await migrateDb();
 await seedRules();
-const [c] = await db.insert(schema.companies).values({ name: company, legalName: company }).returning();
-await db.insert(schema.users).values({ companyId: c.id, email, passwordHash: await hashPassword(password), roles: ['COMPANY_ADMIN'] });
+await createCompany(company, email, password);
 await closeDb();
 console.log(`\nAll previous data deleted. Fresh company "${company}" created.\nSign in as ${email}\nPassword: ${password}\n(Change it under My profile.)\n`);

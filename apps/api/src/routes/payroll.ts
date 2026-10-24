@@ -1,5 +1,5 @@
 import { computePayslip, daysInMonth, fyMonth, taxYearOf, type Payslip } from '@payrollpro/engines';
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { db, schema } from '../db';
@@ -123,7 +123,9 @@ payrollRouter.get('/payroll-runs/:id', requireRole(...ADMIN), h(async (req, res)
       variance: variance === null ? null : Math.round(variance * 10) / 10,
     };
   });
+  const notJoined = await db.select({ f: E.firstName, l: E.lastName, doj: E.doj }).from(E).where(and(eq(E.companyId, cid), gt(E.doj, last), inArray(E.status, ['ACTIVE', 'NOTICE'])));
   const checklist = [
+    { key: 'doj', label: 'Joining date after this month (excluded): fix the date under People', count: notJoined.length, names: notJoined.slice(0, 5).map((e) => `${e.f} ${e.l} (${e.doj})`), level: notJoined.length ? 'amber' : 'green' },
     { key: 'salary', label: 'Employees without a salary structure (excluded)', count: withoutSalary.length, names: withoutSalary.slice(0, 5).map((e) => `${e.firstName} ${e.lastName}`), level: withoutSalary.length ? 'amber' : 'green' },
     { key: 'pan', label: 'Missing PAN (TDS at 20%)', count: items.filter((i) => !i.hasPan).length, level: items.some((i) => !i.hasPan) ? 'amber' : 'green' },
     { key: 'bank', label: 'Missing bank details (put on hold)', count: items.filter((i) => !i.hasBank && !i.inputs.hold).length, level: items.some((i) => !i.hasBank && !i.inputs.hold) ? 'red' : 'green' },

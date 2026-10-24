@@ -1,15 +1,18 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-export const DATA_DIR = process.env.PAYROLLPRO_DATA_DIR ?? fileURLToPath(new URL('../.data', import.meta.url));
+// Production keeps data outside the app folder so a redeploy never wipes it.
+export const DATA_DIR = process.env.PAYROLLPRO_DATA_DIR
+  ?? (process.env.NODE_ENV === 'production' ? `${homedir()}/payrollpro-data` : fileURLToPath(new URL('../.data', import.meta.url)));
 
 /**
- * Zero-config local runs: outside production, missing secrets are generated once and kept in .data/dev-secrets.json
- * (git-ignored, file mode 600). Production refuses to start without real secrets.
+ * Zero-config: missing secrets are generated once and kept in DATA_DIR/dev-secrets.json (git-ignored, file mode 600).
+ * Back this file up with the database: without FIELD_ENCRYPTION_KEY, stored PAN and bank numbers cannot be read.
  */
-if (process.env.NODE_ENV !== 'production' && (!process.env.JWT_SECRET || !process.env.FIELD_ENCRYPTION_KEY)) {
+if ((!process.env.JWT_SECRET || !process.env.FIELD_ENCRYPTION_KEY)) {
   const file = `${DATA_DIR}/dev-secrets.json`; // fine on Windows too: Node accepts forward slashes
   mkdirSync(DATA_DIR, { recursive: true });
   if (!existsSync(file)) writeFileSync(file, JSON.stringify({ JWT_SECRET: randomBytes(48).toString('base64'), FIELD_ENCRYPTION_KEY: randomBytes(32).toString('base64') }), { mode: 0o600 });
@@ -35,7 +38,3 @@ if (!parsed.success) {
 }
 export const env = parsed.data;
 export const isProd = env.NODE_ENV === 'production';
-if (isProd && !env.DATABASE_URL) {
-  console.error('DATABASE_URL is required in production (embedded database is for local use only).');
-  process.exit(1);
-}

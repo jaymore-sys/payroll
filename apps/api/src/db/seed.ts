@@ -8,6 +8,13 @@ import { createRevision, creditJoinerLeave } from '../routes/employees';
 import { closeDb, db, schema } from './index';
 
 /** Migrate, then seed rules and (if the database is empty) the demo company. Used by `npm run dev` on first start. */
+/** One company with one Company Admin login (no demo data). */
+export async function createCompany(name: string, email: string, password: string) {
+  const { hashPassword } = await import('../lib/auth');
+  const [c] = await db.insert(schema.companies).values({ name, legalName: name }).returning();
+  await db.insert(schema.users).values({ companyId: c.id, email: email.trim().toLowerCase(), passwordHash: await hashPassword(password), roles: ['COMPANY_ADMIN'] });
+}
+
 export async function ensureSeeded(password: string) {
   await seedRules();
   const [existing] = await db.select({ id: schema.companies.id }).from(schema.companies).limit(1);

@@ -1,6 +1,8 @@
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express from 'express';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { env, isProd } from './env';
@@ -18,7 +20,7 @@ import { consultantsRouter } from './routes/consultants';
 export const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
-app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] } }, crossOriginResourcePolicy: { policy: 'same-site' } }));
+app.use('/api', helmet({ contentSecurityPolicy: { directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] } }, crossOriginResourcePolicy: { policy: 'same-site' } }));
 app.use(cors({ origin: env.CORS_ORIGIN.split(','), credentials: true, allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'] }));
 app.use(express.json({ limit: '4mb' }));
 app.use(cookieParser());
@@ -31,3 +33,14 @@ app.use('/api/v1/auth', authRouter);
 app.use('/api/v1', requireAuth, companyRouter, employeesRouter, leaveRouter, miscRouter, payrollRouter, attendanceRouter, consultantsRouter);
 app.use('/api', (_req, _res, next) => next(new ApiError(404, 'not_found', 'Route not found')));
 app.use(errorHandler);
+
+// One-process hosting (Hostinger etc.): after `npm run build`, the API also serves the web app.
+const web = fileURLToPath(new URL('../../web/dist', import.meta.url));
+if (existsSync(web)) {
+  app.use(helmet({ contentSecurityPolicy: { directives: {
+    defaultSrc: ["'self'"], scriptSrc: ["'self'", "'unsafe-inline'"], styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+    fontSrc: ["'self'", 'https://fonts.gstatic.com'], imgSrc: ["'self'", 'data:', 'blob:'], connectSrc: ["'self'"], frameAncestors: ["'none'"],
+  } } }));
+  app.use(express.static(web, { index: false, maxAge: '1h' }));
+  app.get('*', (_req, res) => res.sendFile(`${web}/index.html`));
+}

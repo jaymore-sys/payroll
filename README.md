@@ -37,6 +37,25 @@ npm run typecheck
 
 Set `DATABASE_URL` (see `apps/api/.env.example`), then `npm run db:migrate && npm run db:seed`. `docker compose up -d` gives you a local Postgres 16. With `NODE_ENV=production` the API refuses to start without `DATABASE_URL`, `JWT_SECRET` and `FIELD_ENCRYPTION_KEY` — the embedded database and generated secrets are for local use only. API tests can target Postgres with `TEST_DATABASE_URL`.
 
+## Put it online (Hostinger Node.js web app)
+
+One process serves both the API and the web app; data lives in `~/payrollpro-data` (outside the app folder, so redeploys keep it).
+
+| hPanel setting | Value |
+|---|---|
+| Framework | Express (or Other) |
+| Node version | 22 |
+| Root directory | `/` (repo root) |
+| Build command | `npm run build` |
+| Start command / entry | `npm start` |
+| Environment variables | `NODE_ENV=production`, `COMPANY_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` (used once, on first start, to create your company and login) |
+
+Back up `~/payrollpro-data` (it holds the database and the encryption key — without the key, saved PAN/bank numbers cannot be read).
+
+## Open the data in DB Browser for SQLite
+
+Stop the app, then `npm run export:sqlite` → `payrollpro.db` in the project folder (a snapshot copy; the app keeps its own database). Needs Node 22.5+.
+
 ## What's built (phases 1, 2 and the UI shell of 3 & 5)
 
 | Area | Status |
