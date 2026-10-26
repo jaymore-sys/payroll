@@ -36,9 +36,17 @@ const wb = new ExcelJS.Workbook();
 await wb.xlsx.readFile(file(a.ctc));
 const ws = wb.worksheets[0];
 const head = Array.from(ws.getRow(1).values as unknown[], (v) => String(v ?? '').trim()); // exceljs rows are sparse, 1-based
-const ctcRows: Record<string, unknown>[] = [];
+type CtcRow = Record<string, unknown> & { _cells: [string, unknown][] };
+const ctcRows: CtcRow[] = [];
 const cellValue = (v: unknown): unknown => (v && typeof v === 'object' && !(v instanceof Date) ? ((v as any).text ?? (v as any).result ?? (v as any).richText?.map((t: any) => t.text).join('')) : v);
-ws.eachRow((r, i) => { if (i > 1) ctcRows.push(Object.fromEntries(head.map((h, c) => [h, cellValue((r.values as unknown[])[c])]))); });
+// Headers can repeat (RazorpayX lists "LTA (Monthly)" twice), so keep every cell in order; named lookups take the first.
+ws.eachRow((r, i) => {
+  if (i <= 1) return;
+  const cells = head.map((h, c) => [h, cellValue((r.values as unknown[])[c])] as [string, unknown]).filter(([h]) => h);
+  const rec = { _cells: cells } as CtcRow;
+  for (const [h, v] of cells) if (!(h in rec)) rec[h] = v;
+  ctcRows.push(rec);
+});
 const active = ctcRows.filter((r) => r['Status'] === 'Active' && r['Email ID']);
 
 // Small CSV parser (quoted fields, commas inside quotes). RazorpayX prefixes numbers with ' to keep Excel from mangling them.
@@ -58,18 +66,28 @@ const csv = parseCsv(readFileSync(file(a.register), 'utf8').replace(/^﻿/, ''))
 const reg = new Map(csv.slice(1).map((r) => [String(r[csv[0].indexOf('Email')] ?? '').trim().toLowerCase(), Object.fromEntries(csv[0].map((h, i) => [h, (r[i] ?? '').replace(/^'/, '').trim()]))]));
 
 /* ---------- RazorpayX salary components → monthly lines (CTC = their total, employer PF on top) ---------- */
-const COMPONENTS: [string, string, string[], boolean][] = [ // code, name, sheet columns, PF wage (everything except HRA, as on Valencia payslips)
-  ['BASIC', 'Basic', ['Basic Salary (Annual)', 'Basic (Annual)'], true],
-  ['DA', 'Dearness Allowance', ['DA (Annual)', 'Dearness Allowance (Annual)'], true],
-  ['HRA', 'House Rent Allowance', ['HRA (Annual)', 'House Rent Allowance (Annual)'], false],
-  ['SPECIAL', 'Special Allowance', ['Special Allowance (Annual)'], true],
-  ['LTA', 'Leave & Travel Allowance', ['Leave & Travel Allowance (Annual)', 'LTA (Annual)'], true],
-  ['TRAVEL', 'Travel Allowance', ['Travel Allowance (Annual)'], true],
-  ['STIPEND', 'Stipend', ['Stiphend (Annual)', 'Stiphend (Non-Taxable) (Annual)'], true],
+// Every "<component> (Monthly)" or "<component> (Annual)" column with an amount; same component in two columns is added up.
+// PF wage = everything except HRA, as on Valencia's payslips.
+const KNOWN: [RegExp, string, string][] = [
+  [/^basic( salary)?$/i, 'BASIC', 'Basic'], [/^(da|dearness allowance)$/i, 'DA', 'Dearness Allowance'],
+  [/^(hra|house rent allowance)$/i, 'HRA', 'House Rent Allowance'], [/^special allowance$/i, 'SPECIAL', 'Special Allowance'],
+  [/^(lta|leave & travel allowance)$/i, 'LTA', 'Leave & Travel Allowance'], [/^sti(p|ph)end\b/i, 'STIPEND', 'Stipend'],
 ];
-const componentsOf = (r: Record<string, unknown>) => COMPONENTS
-  .map(([code, name, cols, isWage]) => ({ code, name, isWage, monthly: Math.round((cols.reduce((t, c) => t + (Number(r[c]) || 0), 0) / 12) * 100) / 100 }))
-  .filter((c) => c.monthly > 0);
+const SKIP = /^(ctc|employer'?s pf|variable pay)/i;
+function componentsOf(r: CtcRow) {
+  const out = new Map<string, { code: string; name: string; monthly: number; isWage: boolean }>();
+  for (const [h, v] of r._cells) {
+    const m = h.match(/^(.*) \((Monthly|Annual)\)$/);
+    const amount = Number(v) || 0;
+    if (!m || !amount || SKIP.test(m[1])) continue;
+    const known = KNOWN.find(([re]) => re.test(m[1].trim()));
+    const code = known?.[1] ?? m[1].toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 20);
+    const c = out.get(code) ?? { code, name: known?.[2] ?? m[1].trim(), monthly: 0, isWage: code !== 'HRA' };
+    c.monthly = Math.round((c.monthly + (m[2] === 'Annual' ? amount / 12 : amount)) * 100) / 100;
+    out.set(code, c);
+  }
+  return [...out.values()];
+}
 
 /* ---------- wipe and set up the company (skipped with --salaries-only) ---------- */
 await migrateDb();
@@ -92,7 +110,7 @@ const [branch] = salariesOnly ? await db.select().from(schema.branches).where(eq
 const adminWasFlagged = admin.mustChangePassword;
 if (adminWasFlagged) await db.update(schema.users).set({ mustChangePassword: false }).where(eq(schema.users.id, admin.id)); // restored below
 const token = signAccess({ sub: admin.id, cid: company.id, roles: admin.roles, eid: admin.employeeId, ver: admin.tokenVersion });
-const api = (m: 'post' | 'get', u: string, b?: object) => request(app)[m](`/api/v1${u}`).set('Authorization', `Bearer ${token}`).send(b);
+const api = (m: 'post' | 'get' | 'put', u: string, b?: object) => request(app)[m](`/api/v1${u}`).set('Authorization', `Bearer ${token}`).send(b);
 
 if (salariesOnly) {
   const S = schema.salaryStructures, E = schema.employees;
@@ -104,12 +122,22 @@ if (salariesOnly) {
   // Draft payslips are only a preview: drop them now and recalculate the runs once salaries are rebuilt.
   await db.delete(schema.payslips).where(eq(schema.payslips.companyId, company.id));
   const notes: string[] = []; let done = 0;
+  const desigs = new Map((await db.select().from(schema.designations).where(eq(schema.designations.companyId, company.id))).map((d) => [d.name.toLowerCase(), d.id]));
   for (const r of active) {
     const [e] = await db.select().from(E).where(and(eq(E.companyId, company.id), eq(E.workEmail, String(r['Email ID']).trim().toLowerCase())));
     const components = componentsOf(r);
     if (!e) { notes.push(`${r['Employee Name']}: not in PayrollPro`); continue; }
+    // Title from the sheet (e.g. intern → employee) keeps the designation and employment type current.
+    const title = tidyTitle(r['Title']);
+    if (title) {
+      let did = desigs.get(title.toLowerCase());
+      if (!did) { did = (await api('post', '/designations', { name: title })).body.id as string; desigs.set(title.toLowerCase(), did); }
+      if (did !== e.designationId) await api('put', `/employees/${e.id}`, { designationId: did, employmentType: /intern/i.test(title) ? 'intern' : 'permanent' });
+    }
     await db.delete(S).where(eq(S.employeeId, e.id));
     if (!components.length) { notes.push(`${e.code} ${r['Employee Name']}: no salary in the sheet`); continue; }
+    const total = Math.round(components.reduce((t, c) => t + c.monthly, 0) * 12);
+    if (Math.abs(total - (Number(r['CTC (Annual)']) || 0)) > 12) notes.push(`${e.code} ${r['Employee Name']}: components add up to ₹${total} a year but CTC says ₹${r['CTC (Annual)']}`);
     const res = await api('post', `/employees/${e.id}/salary-revisions`, { components, effectiveFrom: e.doj });
     if (res.status !== 201) notes.push(`${e.code} ${r['Employee Name']}: ${res.body.message}`); else done++;
   }
@@ -164,7 +192,7 @@ for (const r of active) {
   const notes = [
     !g['Gender'] && 'gender missing (set to Male)', ctc <= 0 && 'no salary in the sheet', !pan && 'no PAN', !bank && 'no bank details',
     String(body.code) !== `EMP${String(r['Employee ID']).padStart(4, '0')}` && `code ${body.code} (RazorpayX ID ${r['Employee ID'] ?? 'blank'} was missing or repeated)`,
-    Number(r['Stiphend (Annual)']) && 'salary is a stipend: PF is deducted on it like other pay, check with RazorpayX',
+    componentsOf(r).some((c) => c.code === 'STIPEND') && !body.pfOptOut && 'stipend with PF enabled: PF is deducted on it, check with RazorpayX',
   ].filter(Boolean);
   if (notes.length) report.push(`${body.code}  ${parts.join(' ')}: ${notes.join('; ')}`);
 }
