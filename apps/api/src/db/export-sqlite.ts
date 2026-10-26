@@ -13,14 +13,24 @@ import { closeDb, db } from './index';
 
 const out = resolve(process.env.INIT_CWD ?? process.cwd(), process.argv[2] ?? 'payrollpro.db');
 if (existsSync(out)) rmSync(out);
-const lite = new DatabaseSync(out);
+const lite = new DatabaseSync(out, { enableForeignKeyConstraints: false }); // tables are copied in name order
 
 const rows = async <T>(q: ReturnType<typeof sql>) => ((await db.execute(q)) as unknown as { rows: T[] }).rows;
-const cols = await rows<{ t: string; c: string; type: string }>(sql`
-  select table_name t, column_name c, data_type type from information_schema.columns
+const cols = await rows<{ t: string; c: string; type: string; nullable: string }>(sql`
+  select table_name t, column_name c, data_type type, is_nullable nullable from information_schema.columns
   where table_schema = 'public' order by table_name, ordinal_position`);
+// Primary and foreign keys, so DB Browser shows how the tables connect.
+const keys = await rows<{ t: string; c: string; kind: string; ft: string; fc: string }>(sql`
+  select tc.table_name t, kcu.column_name c, tc.constraint_type kind, ccu.table_name ft, ccu.column_name fc
+  from information_schema.table_constraints tc
+  join information_schema.key_column_usage kcu on kcu.constraint_name = tc.constraint_name and kcu.table_schema = tc.table_schema
+  join information_schema.constraint_column_usage ccu on ccu.constraint_name = tc.constraint_name and ccu.table_schema = tc.table_schema
+  where tc.table_schema = 'public' and tc.constraint_type in ('PRIMARY KEY', 'FOREIGN KEY')`);
+const pk = (t: string) => keys.filter((k) => k.t === t && k.kind === 'PRIMARY KEY').map((k) => `"${k.c}"`);
+const fks = (t: string) => keys.filter((k) => k.t === t && k.kind === 'FOREIGN KEY' && tables.has(k.ft))
+  .map((k) => `FOREIGN KEY ("${k.c}") REFERENCES "${k.ft}"("${k.fc}")`);
 
-const tables = new Map<string, { c: string; type: string }[]>();
+const tables = new Map<string, { c: string; type: string; nullable: string }[]>();
 // Sign-in secrets stay out of the file.
 for (const r of cols) if (r.t !== 'refresh_token' && !/hash|secret/.test(r.c)) tables.set(r.t, [...(tables.get(r.t) ?? []), r]);
 
@@ -28,7 +38,8 @@ const affinity = (t: string) => (/int|numeric|double|real/.test(t) ? 'NUMERIC' :
 const value = (v: unknown) => (v == null ? null : v instanceof Date ? v.toISOString() : typeof v === 'boolean' ? Number(v) : typeof v === 'object' ? JSON.stringify(v) : (v as string | number));
 
 for (const [t, cs] of tables) {
-  lite.exec(`CREATE TABLE "${t}" (${cs.map((c) => `"${c.c}" ${affinity(c.type)}`).join(', ')})`);
+  const defs = [...cs.map((c) => `"${c.c}" ${affinity(c.type)}${c.nullable === 'NO' ? ' NOT NULL' : ''}`), ...(pk(t).length ? [`PRIMARY KEY (${pk(t).join(', ')})`] : []), ...fks(t)];
+  lite.exec(`CREATE TABLE "${t}" (\n  ${defs.join(',\n  ')}\n)`);
   const data = await rows<Record<string, unknown>>(sql.raw(`select ${cs.map((c) => `"${c.c}"`).join(', ')} from "${t}"`));
   const ins = lite.prepare(`INSERT INTO "${t}" VALUES (${cs.map(() => '?').join(', ')})`);
   lite.exec('BEGIN');
