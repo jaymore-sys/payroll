@@ -41,7 +41,7 @@ function surcharge(rule: TaxRule, taxable: Decimal, tax: Decimal): Decimal {
   return max(0, min(raw, cap.minus(tax)));
 }
 
-/** Annual tax on taxable income: slab → 87A → surcharge → cess → round to ₹10 (spec §7.3 step 7). */
+/** Annual tax on taxable income: slab → 87A → surcharge → cess → round to the rupee. */
 export function annualTax(rule: TaxRule, taxableIn: Num) {
   const taxable = max(0, rupee(taxableIn));
   const slab = slabTax(rule, taxable);

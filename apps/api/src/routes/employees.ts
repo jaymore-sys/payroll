@@ -7,6 +7,7 @@ import { audit } from '../lib/audit';
 import { employeeAccess, notifyUsersOfEmployees, teamIds, type Access } from '../lib/access';
 import { canSeePay, hashPassword, hasRole, requireRole } from '../lib/auth';
 import { decrypt, decryptJson, encrypt, encryptJson, mask, randomToken } from '../lib/crypto';
+import { needsRecalc } from '../lib/runs';
 import { ApiError, forbidden, h, notFound, page, parse } from '../lib/http';
 import { loadRules } from '../lib/rules';
 
@@ -121,9 +122,14 @@ employeesRouter.get('/employees/:id/sensitive', h(async (req, res) => {
 
 /* ---------------- create / update ---------------- */
 async function nextCode(cid: string) {
-  const [c] = await db.update(schema.companies).set({ nextEmployeeSeq: sql`${schema.companies.nextEmployeeSeq} + 1` })
-    .where(eq(schema.companies.id, cid)).returning({ seq: schema.companies.nextEmployeeSeq, prefix: schema.companies.employeeCodePrefix });
-  return `${c.prefix}${String(c.seq - 1).padStart(4, '0')}`;
+  // Skip codes already taken (e.g. employees imported with their RazorpayX IDs).
+  for (;;) {
+    const [c] = await db.update(schema.companies).set({ nextEmployeeSeq: sql`${schema.companies.nextEmployeeSeq} + 1` })
+      .where(eq(schema.companies.id, cid)).returning({ seq: schema.companies.nextEmployeeSeq, prefix: schema.companies.employeeCodePrefix });
+    const code = `${c.prefix}${String(c.seq - 1).padStart(4, '0')}`;
+    const [taken] = await db.select({ id: E.id }).from(E).where(and(eq(E.companyId, cid), eq(E.code, code)));
+    if (!taken) return code;
+  }
 }
 
 /** Credit prorated upfront leave for a new joiner (spec §9.2). */
@@ -169,6 +175,7 @@ export async function createRevision(req: any, empId: string, pay: { annualCtc?:
   }).then(async ({ row, prev }) => {
     // Audit after commit: the embedded database is single-connection, so writing outside the tx inside it would deadlock.
     await audit(req, 'salary_revision', 'employee', empId, prev ? { annualCtc: prev.annualCtc, effectiveFrom: prev.effectiveFrom } : undefined, { annualCtc, effectiveFrom });
+    await needsRecalc(cid);
     return row;
   });
 }
@@ -202,6 +209,12 @@ employeesRouter.put('/employees/:id', requireRole('COMPANY_ADMIN', 'PAYROLL_MANA
   if (!before) throw notFound('Employee');
   const { pan, bank, aadhaar, ...rest } = d;
   const [after] = await db.update(E).set({ ...rest, ...sensitiveColumns({ pan, bank, aadhaar }) } as any).where(eq(E.id, before.id)).returning();
+  // Joining date corrected: the first salary starts on the new date, otherwise the employee drops out of payroll for those months.
+  if (d.doj && d.doj !== before.doj) {
+    const [first] = await db.select().from(S).where(eq(S.employeeId, before.id)).orderBy(asc(S.effectiveFrom)).limit(1);
+    if (first && first.effectiveFrom === before.doj) await db.update(S).set({ effectiveFrom: d.doj }).where(eq(S.id, first.id));
+  }
+  await needsRecalc(cid);
   const changed = Object.keys(d);
   await audit(req, 'update', 'employee', before.id, { fields: changed, panLast4: before.panLast4, bankLast4: before.bankLast4 }, { fields: changed, panLast4: after.panLast4, bankLast4: after.bankLast4 });
   res.json({ ok: true });
@@ -212,6 +225,7 @@ employeesRouter.post('/employees/:id/exit', requireRole('COMPANY_ADMIN'), h(asyn
   const status = d.lastWorkingDay <= new Date().toISOString().slice(0, 10) ? 'EXITED' : 'NOTICE';
   const [row] = await db.update(E).set({ lastWorkingDay: d.lastWorkingDay, exitReason: d.reason, status }).where(and(eq(E.companyId, req.user!.cid), eq(E.id, req.params.id))).returning({ id: E.id });
   if (!row) throw notFound('Employee');
+  await needsRecalc(req.user!.cid);
   await audit(req, 'exit', 'employee', row.id, undefined, { ...d, status });
   res.json({ status });
 }));

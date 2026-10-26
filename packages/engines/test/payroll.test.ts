@@ -77,9 +77,11 @@ describe('computePayslip (spec §10.2)', () => {
     expect(p.deductions.pf).toBe(1800);
     expect(p.notes.join(' ')).toMatch(/capped/);
   });
-  it('no PAN: TDS at least 20% of gross', () => {
+  it('no PAN: 20% of taxable income when tax is payable; nothing below the taxable limit', () => {
     const p = computePayslip(base({ employee: { ...emp, hasPan: false } }), SR, TR);
-    expect(p.deductions.tds).toBe(Math.round(p.gross * 0.2));
+    expect(p.deductions.tds).toBe(Math.round(p.tax.projectedTaxable * 0.2 / 12));
+    const low = splitCtc({ annualCtc: 168000, metro: true, pfCapMode: 'capped', state: 'MH' });
+    expect(computePayslip(base({ components: low.components, employee: { ...emp, hasPan: false } }), SR, TR).deductions.tds).toBe(0);
   });
   it('low earner: ESI applies and income tax is nil', () => {
     const low = splitCtc({ annualCtc: 240000, employerCostInCtc: true, metro: false, pfCapMode: 'capped', state: 'MH' });

@@ -8,6 +8,7 @@ import { audit } from '../lib/audit';
 import { teamIds } from '../lib/access';
 import { hasRole } from '../lib/auth';
 import { ApiError, forbidden, h, parse } from '../lib/http';
+import { needsRecalc } from '../lib/runs';
 
 /**
  * Monthly attendance, entered by reporting managers (their team) or HR (everyone). Leave is applied in another
@@ -100,6 +101,7 @@ async function save(req: Request, month: string, items: z.infer<typeof item>[]) 
         .onConflictDoUpdate({ target: [A.companyId, A.employeeId, A.month], set: v });
     }
   });
+  await needsRecalc(req.user!.cid, month);
   await audit(req, 'attendance_saved', 'attendance', month, undefined, { month, count: items.length });
 }
 
@@ -205,7 +207,10 @@ attendanceRouter.post('/attendance/import', h(async (req, res) => {
     const n = nm(raw), full = emps.filter((x) => nm(`${x.e.firstName} ${x.e.lastName}`) === n);
     if (full.length === 1) return full[0].e.id;
     const part = emps.filter((x) => nm(x.e.firstName) === n || nm(`${x.e.firstName} ${x.e.lastName}`).startsWith(`${n} `));
-    return part.length === 1 ? part[0].e.id : part.length > 1 ? 'ambiguous' : undefined;
+    if (part.length) return part.length === 1 ? part[0].e.id : 'ambiguous';
+    // Surname spelt differently in the sheet ("Kikawat" / "Kikavat"): fall back to a first name only one employee has.
+    const first = emps.filter((x) => nm(x.e.firstName) === n.split(' ')[0]);
+    return first.length === 1 ? first[0].e.id : first.length > 1 ? 'ambiguous' : undefined;
   };
   const unmatched: string[] = [];
   const has = (v: unknown) => v !== '' && v !== undefined && v !== null;

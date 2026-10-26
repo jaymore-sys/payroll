@@ -5,6 +5,7 @@ import { z, type ZodObject, type ZodRawShape } from 'zod';
 import { db, schema } from '../db';
 import type { Role } from '../db/schema';
 import { audit } from '../lib/audit';
+import { needsRecalc } from '../lib/runs';
 import { requireRole } from '../lib/auth';
 import { h, notFound, parse } from '../lib/http';
 
@@ -31,6 +32,7 @@ companyRouter.put('/company', requireRole('COMPANY_ADMIN'), h(async (req, res) =
   const data = parse(companySchema, req.body);
   const [before] = await db.select().from(C).where(eq(C.id, req.user!.cid));
   const [after] = await db.update(C).set(data).where(eq(C.id, req.user!.cid)).returning();
+  await needsRecalc(req.user!.cid);
   await audit(req, 'update', 'company', after.id, before, after);
   res.json(after);
 }));

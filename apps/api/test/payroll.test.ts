@@ -122,6 +122,10 @@ describe('manager attendance → payroll LOP', () => {
     expect(it.payslip.payableDays).toBe(it.payslip.payableDays); // computed
     expect(it.payslip.notes.join(' ')).toMatch(/2 LOP/);
     expect(det.body.checklist.find((c: { key: string }) => c.key === 'attendance').count).toBeGreaterThan(0);
+    // Attendance changed after calculating: the run must be calculated again before it can be approved.
+    await as('manager').put('/attendance', { month: m, items: [{ employeeId: t.employeeId, presentDays: 10, paidLeaveDays: 0, lopDays: 1 }] });
+    expect((await as('payroll').get(`/payroll-runs/${run.body.id}`)).body.run.status).toBe('DRAFT');
+    expect((await as('admin').post(`/payroll-runs/${run.body.id}/approve`)).status).toBe(409);
   });
   it('exports the attendance sheet and imports it back (xlsx round trip)', async () => {
     const x = await as('admin').get(`/attendance/export.xlsx?month=${m}`).buffer(true).parse((res, cb) => { const b: Buffer[] = []; res.on('data', (c: Buffer) => b.push(c)); res.on('end', () => cb(null, Buffer.concat(b))); });

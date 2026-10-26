@@ -1,7 +1,7 @@
 import { D, Decimal, max, n, rupee } from './money';
 import { findTaxRule, type AgeBand, type Regime, type StatutoryRule, type TaxRule } from './rules';
 import { computeStatutory, type StatEmployee } from './statutory';
-import { computeRegime, type Line } from './tax';
+import { computeRegime, noPanTds, type Line } from './tax';
 
 /** FY month index: April = 1 … March = 12. */
 export const fyMonth = (month: string) => ((Number(month.slice(5, 7)) - 4 + 12) % 12) + 1;
@@ -104,9 +104,12 @@ export function computePayslip(i: PayslipInput, statRules: StatutoryRule[], taxR
   const paidSoFar = D(ytd.tds).plus(prev.tds).plus(assumedTds);
   const regularTds = max(0, rupee(D(withoutBonus.totalTax).minus(paidSoFar).dividedBy(12 - m + 1)));
   let tds = regularTds.plus(max(0, D(withBonus.totalTax).minus(withoutBonus.totalTax)));
-  if (!i.employee.hasPan) {
-    const floor = rupee(gross.times(0.2));
-    if (floor.gt(tds)) { tds = floor; notes.push('No PAN: TDS at 20%'); }
+  // No PAN (s.206AA): the year's TDS is the higher of 20% or the average rate on taxable income — only when tax is
+  // actually payable; no TDS is due when income is below the taxable limit.
+  if (!i.employee.hasPan && withBonus.totalTax > 0) {
+    const yearly = noPanTds(withBonus.taxableIncome, withBonus.totalTax);
+    const floor = max(0, rupee(D(yearly).minus(paidSoFar).dividedBy(12 - m + 1)));
+    if (floor.gt(tds)) { tds = floor; notes.push('No PAN: TDS at 20% of taxable income'); }
   }
 
   // 4. Deductions and net pay. Statutory deductions are never reduced; other deductions are capped so net ≥ 0.

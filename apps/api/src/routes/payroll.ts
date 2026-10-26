@@ -62,6 +62,10 @@ async function syncInputs(cid: string, runId: string, month: string) {
   const att = await attendanceFor(cid, month);
   const lwp = await unpaidLeaveDays(cid, month);
   const existing = new Set((await db.select({ e: I.employeeId }).from(I).where(eq(I.runId, runId))).map((x) => x.e));
+  // Drop people no longer on this month's payroll (joining date or salary changed since the run was created).
+  const keep = new Set(withSalary.map(({ e }) => e.id));
+  const stale = [...existing].filter((id) => !keep.has(id));
+  if (stale.length) await db.delete(I).where(and(eq(I.runId, runId), inArray(I.employeeId, stale)));
   const add = withSalary.filter(({ e }) => !existing.has(e.id)).map(({ e }) => ({ companyId: cid, runId, employeeId: e.id, lopDays: String(att.get(e.id)?.lopDays ?? lwp.get(e.id) ?? 0) }));
   if (add.length) await db.insert(I).values(add);
   return add.length;
@@ -127,7 +131,7 @@ payrollRouter.get('/payroll-runs/:id', requireRole(...ADMIN), h(async (req, res)
   const checklist = [
     { key: 'doj', label: 'Joining date after this month (excluded): fix the date under People', count: notJoined.length, names: notJoined.slice(0, 5).map((e) => `${e.f} ${e.l} (${e.doj})`), level: notJoined.length ? 'amber' : 'green' },
     { key: 'salary', label: 'Employees without a salary structure (excluded)', count: withoutSalary.length, names: withoutSalary.slice(0, 5).map((e) => `${e.firstName} ${e.lastName}`), level: withoutSalary.length ? 'amber' : 'green' },
-    { key: 'pan', label: 'Missing PAN (TDS at 20%)', count: items.filter((i) => !i.hasPan).length, level: items.some((i) => !i.hasPan) ? 'amber' : 'green' },
+    { key: 'pan', label: 'Missing PAN (TDS at 20% when income is taxable)', count: items.filter((i) => !i.hasPan).length, level: items.some((i) => !i.hasPan) ? 'amber' : 'green' },
     { key: 'bank', label: 'Missing bank details (put on hold)', count: items.filter((i) => !i.hasBank && !i.inputs.hold).length, level: items.some((i) => !i.hasBank && !i.inputs.hold) ? 'red' : 'green' },
     { key: 'attendance', label: 'Attendance not entered by managers (LOP = 0)', count: items.filter((i) => !i.attendance).length, level: items.some((i) => !i.attendance) ? 'amber' : 'green' },
     { key: 'joiners', label: 'Joiners / leavers this month (prorated)', count: items.filter((i) => i.joinedThisMonth || i.leavingThisMonth).length, level: 'green' },
