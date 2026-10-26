@@ -52,6 +52,14 @@ One process serves both the API and the web app; data lives in `~/payrollpro-dat
 
 Back up `~/payrollpro-data` (it holds the database and the encryption key — without the key, saved PAN/bank numbers cannot be read).
 
+## Move to PostgreSQL on your computer
+
+1. Install PostgreSQL 16 (Windows installer from postgresql.org; keep pgAdmin 4 ticked) and create a database `payrollpro` in pgAdmin.
+2. Create `apps/api/.env` with `DATABASE_URL=postgres://postgres:YOUR_PASSWORD@localhost:5432/payrollpro`.
+3. Stop the app, run `npm run db:copy-to-postgres` (creates the tables and copies all data from the built-in database), then `npm run dev`.
+
+Keep `apps/api/.data/dev-secrets.json`: it holds the key that unlocks PAN and bank numbers, also after the move.
+
 ## Open the data in DB Browser for SQLite
 
 Stop the app, then `npm run export:sqlite` → `payrollpro.db` in the project folder (a snapshot copy; the app keeps its own database). Needs Node 22.5+.

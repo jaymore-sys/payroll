@@ -12,7 +12,8 @@
     "typecheck": "tsc -p .",
     "db:generate": "drizzle-kit generate",
     "fresh": "tsx src/db/fresh.ts",
-    "export:sqlite": "tsx src/db/export-sqlite.ts"
+    "export:sqlite": "tsx src/db/export-sqlite.ts",
+    "db:copy-to-postgres": "tsx src/db/copy-to-postgres.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.2.17",
