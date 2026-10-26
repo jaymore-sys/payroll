@@ -5,7 +5,7 @@ import { get, post, refreshSession, setAccessToken, setLogoutHandler } from './a
 
 export type Role = 'SUPER_ADMIN' | 'COMPANY_ADMIN' | 'PAYROLL_MANAGER' | 'REPORTING_MANAGER' | 'EMPLOYEE';
 export interface Me {
-  id: string; email: string; roles: Role[]; employeeId: string | null; totpEnabled: boolean; lastLoginAt: string | null;
+  id: string; email: string; roles: Role[]; employeeId: string | null; totpEnabled: boolean; lastLoginAt: string | null; mustChangePassword?: boolean;
   company: { id: string; name: string }; employee: { firstName: string; lastName: string; code: string } | null;
 }
 interface AuthCtx {

@@ -98,6 +98,8 @@ export const users = pgTable('app_user', {
   totpSecretEnc: text('totp_secret_enc'),
   totpEnabled: boolean('totp_enabled').notNull().default(false),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  /** Set for a default/temporary password: every screen is blocked until the user picks their own. */
+  mustChangePassword: boolean('must_change_password').notNull().default(false),
   ...stamps,
 }, (t) => [index().on(t.companyId)]);
 

@@ -19,7 +19,8 @@
     "fresh": "npm run fresh -w @payrollpro/api --",
     "start": "npm start -w @payrollpro/api",
     "export:sqlite": "npm run export:sqlite -w @payrollpro/api",
-    "db:copy-to-postgres": "npm run db:copy-to-postgres -w @payrollpro/api"
+    "db:copy-to-postgres": "npm run db:copy-to-postgres -w @payrollpro/api",
+    "import:razorpay": "npm run import:razorpay -w @payrollpro/api --"
   },
   "engines": {
     "node": ">=20"

@@ -112,7 +112,7 @@ authRouter.post('/logout', h(async (req, res) => {
 }));
 
 authRouter.get('/me', requireAuth, h(async (req, res) => {
-  const [u] = await db.select({ id: U.id, email: U.email, roles: U.roles, employeeId: U.employeeId, totpEnabled: U.totpEnabled, lastLoginAt: U.lastLoginAt }).from(U).where(eq(U.id, req.user!.sub));
+  const [u] = await db.select({ id: U.id, email: U.email, roles: U.roles, employeeId: U.employeeId, totpEnabled: U.totpEnabled, lastLoginAt: U.lastLoginAt, mustChangePassword: U.mustChangePassword }).from(U).where(eq(U.id, req.user!.sub));
   const [company] = await db.select({ id: schema.companies.id, name: schema.companies.name }).from(schema.companies).where(eq(schema.companies.id, req.user!.cid));
   const emp = u.employeeId
     ? (await db.select({ firstName: schema.employees.firstName, lastName: schema.employees.lastName, code: schema.employees.code }).from(schema.employees).where(eq(schema.employees.id, u.employeeId)))[0]
@@ -127,7 +127,8 @@ authRouter.post('/change-password', requireAuth, h(async (req, res) => {
   const { current, next } = parse(z.object({ current: z.string().max(200), next: passwordSchema }), req.body);
   const [u] = await db.select().from(U).where(eq(U.id, req.user!.sub));
   if (!(await verifyPassword(u.passwordHash, current))) throw new ApiError(400, 'invalid_password', 'Current password is wrong');
-  await db.update(U).set({ passwordHash: await hashPassword(next), tokenVersion: sql`${U.tokenVersion} + 1` }).where(eq(U.id, u.id));
+  if (next === current) throw new ApiError(400, 'same_password', 'Choose a password different from the current one');
+  await db.update(U).set({ passwordHash: await hashPassword(next), mustChangePassword: false, tokenVersion: sql`${U.tokenVersion} + 1` }).where(eq(U.id, u.id));
   await db.update(RT).set({ revokedAt: new Date() }).where(and(eq(RT.userId, u.id), isNull(RT.revokedAt), gt(RT.expiresAt, new Date())));
   await audit(req, 'password_changed', 'user', u.id);
   res.clearCookie(COOKIE, cookieOpts);

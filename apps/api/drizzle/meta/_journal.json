@@ -36,6 +36,13 @@
       "when": 1792761433924,
       "tag": "0004_consultants",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793012640442,
+      "tag": "0005_must_change_password",
+      "breakpoints": true
     }
   ]
 }

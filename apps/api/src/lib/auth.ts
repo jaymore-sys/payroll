@@ -40,9 +40,11 @@ export const requireAuth = h(async (req: Request, _res: Response, next: NextFunc
     throw new ApiError(401, 'token_expired', 'Session expired');
   }
   if (p.purpose) throw new ApiError(401, 'unauthenticated', 'Please sign in');
-  const [u] = await db.select({ active: schema.users.active, ver: schema.users.tokenVersion, roles: schema.users.roles, eid: schema.users.employeeId })
+  const [u] = await db.select({ active: schema.users.active, ver: schema.users.tokenVersion, roles: schema.users.roles, eid: schema.users.employeeId, mcp: schema.users.mustChangePassword })
     .from(schema.users).where(and(eq(schema.users.id, p.sub!), eq(schema.users.companyId, p.cid)));
   if (!u || !u.active || u.ver !== p.ver) throw new ApiError(401, 'session_revoked', 'Please sign in again');
+  // Default password: only the sign-in routes (me, change-password, logout) work until it is changed.
+  if (u.mcp && !req.originalUrl.startsWith('/api/v1/auth/')) throw new ApiError(403, 'password_change_required', 'Please set your own password first');
   req.user = { sub: p.sub!, cid: p.cid, roles: u.roles, eid: u.eid, ver: u.ver };
   next();
 });

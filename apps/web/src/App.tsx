@@ -14,6 +14,7 @@ const pages = {
   Users: () => import('./pages/Users'), Payroll: () => import('./pages/Payroll'), PayrollRun: () => import('./pages/PayrollRun'), Payslips: () => import('./pages/Payslips'), Consultants: () => import('./pages/Consultants'), PayslipPrint: () => import('./pages/PayslipPrint'), Audit: () => import('./pages/Audit'), Profile: () => import('./pages/Profile'), NotFound: () => import('./pages/NotFound'),
 };
 const Login = lazy(() => import('./pages/Login'));
+const SetPassword = lazy(() => import('./pages/SetPassword'));
 const Dashboard = lazy(pages.Dashboard);
 const Employees = lazy(pages.Employees);
 const EmployeeDetail = lazy(pages.EmployeeDetail);
@@ -63,6 +64,8 @@ export default function App() {
         <Suspense fallback={me ? <div className="p-6"><PageSkeleton /></div> : null}>
           {!me ? (
             <Routes><Route path="*" element={<Login />} /></Routes>
+          ) : me.mustChangePassword ? (
+            <SetPassword />
           ) : (
             <Routes>
               <Route path="login" element={<Navigate to="/" replace />} />
