@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { STATUTORY_RULES as SR, TAX_RULES as TR, annualTax, computePayslip, daysInMonth, findTaxRule, fyMonth, periodDays, splitCtc, taxYearOf, type PayslipInput } from '../src';
 
-const s = splitCtc({ annualCtc: 1800000, metro: true, pfCapMode: 'capped', state: 'MH' });
+const s = splitCtc({ annualCtc: 1800000, employerCostInCtc: true, metro: true, pfCapMode: 'capped', state: 'MH' });
 const emp = { gender: 'M' as const, state: 'MH', age: 30, doj: '2020-01-01', pfCapMode: 'capped' as const, regime: 'new' as const, ageBand: 'below60' as const, metro: true, hasPan: true };
 const base = (o: Partial<PayslipInput> = {}): PayslipInput => ({ month: '2026-04', components: s.components, employee: emp, ...o });
 
@@ -82,7 +82,7 @@ describe('computePayslip (spec §10.2)', () => {
     expect(p.deductions.tds).toBe(Math.round(p.gross * 0.2));
   });
   it('low earner: ESI applies and income tax is nil', () => {
-    const low = splitCtc({ annualCtc: 240000, metro: false, pfCapMode: 'capped', state: 'MH' });
+    const low = splitCtc({ annualCtc: 240000, employerCostInCtc: true, metro: false, pfCapMode: 'capped', state: 'MH' });
     const p = computePayslip(base({ components: low.components, employee: { ...emp, metro: false } }), SR, TR);
     expect(p.deductions.esi).toBeGreaterThan(0);
     expect(p.employer.esi).toBeGreaterThan(0);
@@ -107,5 +107,24 @@ describe('company payslip format (September 2026 payslips)', () => {
     expect(p.gross).toBe(33751);
     expect(p.deductions).toMatchObject({ pf: 3000, pt: 200, total: 3200 });
     expect(p.net).toBe(30551);
+  });
+});
+
+describe('RazorpayX Master CTC Report (Valencia)', () => {
+  it('CTC is gross × 12: ₹3,60,000 → Basic 15,000, HRA 7,500, LTA 3,000, Special 4,500', () => {
+    const r = splitCtc({ annualCtc: 360000, metro: true, pfCapMode: 'capped', state: 'MH', asOf: '2026-10' });
+    expect(r.monthlyGross).toBe(30000);
+    expect(r.checkCtc).toBe(360000);
+    expect(Object.fromEntries(r.components.map((c) => [c.code, c.annual]))).toEqual({ BASIC: 180000, HRA: 90000, LTA: 36000, SPECIAL: 54000 });
+    expect(r.employee.pf).toBe(2700); // 12% of everything except HRA
+  });
+  it('PF disabled and company without ESI: no PF, no ESI', () => {
+    const r = splitCtc({ annualCtc: 120000, metro: true, pfCapMode: 'capped', state: 'MH', asOf: '2026-10', pfOptOut: true, esiExempt: true });
+    expect(r.employee).toMatchObject({ pf: 0, esi: 0 });
+    expect(r.employer.esi).toBe(0);
+  });
+  it('Tax Computation Report: ₹18,02,400 new regime → ₹1,51,299 for the year', () => {
+    const t = annualTax(findTaxRule(TR, '2026-27', 'new', 'below60'), 1802400 - 75000);
+    expect(t.totalTax).toBe(151299);
   });
 });

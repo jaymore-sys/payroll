@@ -19,7 +19,7 @@ const companySchema = z.object({
   cin: opt(z.string().max(30)), gstin: opt(z.string().regex(/^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$/, 'Invalid GSTIN')), address: opt(z.string().max(500)),
   fyStartMonth: z.number().int().min(1).max(12), payDay: z.number().int().min(1).max(31), cutoffDay: z.number().int().min(1).max(31),
   payableDaysMethod: z.enum(['calendar', 'fixed30', 'working']), pfCapMode: z.enum(['capped', 'actual']),
-  labourCodeMode: z.boolean(), twoPersonRule: z.boolean(),
+  labourCodeMode: z.boolean(), twoPersonRule: z.boolean(), esiEnabled: z.boolean(),
   weekPattern: z.object({ weeklyOffs: z.array(z.number().int().min(0).max(6)).max(7), offSaturdaysOfMonth: z.array(z.number().int().min(1).max(5)).max(5).optional() }).strict(), employeeCodePrefix: z.string().regex(/^[A-Z0-9-]{1,8}$/),
 }).partial();
 

@@ -112,7 +112,7 @@ describe('statutory engine (spec §6)', () => {
 
 describe('CTC split (spec §5)', () => {
   it('gross + employer costs reconcile to CTC within ₹12/yr', () => {
-    const r = splitCtc({ annualCtc: 1200000, metro: true, pfCapMode: 'capped', state: 'MH' });
+    const r = splitCtc({ annualCtc: 1200000, employerCostInCtc: true, metro: true, pfCapMode: 'capped', state: 'MH' });
     expect(Math.abs(r.checkCtc - 1200000)).toBeLessThanOrEqual(12);
     const basic = r.components.find((c) => c.code === 'BASIC')!.monthly;
     expect(basic).toBe(Math.round(r.monthlyGross * 0.5));
@@ -120,14 +120,14 @@ describe('CTC split (spec §5)', () => {
     expect(r.deemedWages).toBe(0);
   });
   it('low CTC picks up ESI; HRA 25% of gross everywhere', () => {
-    const r = splitCtc({ annualCtc: 240000, metro: false, pfCapMode: 'capped', state: 'MH' });
+    const r = splitCtc({ annualCtc: 240000, employerCostInCtc: true, metro: false, pfCapMode: 'capped', state: 'MH' });
     expect(r.employer.esi).toBeGreaterThan(0);
     const basic = r.components.find((c) => c.code === 'BASIC')!.monthly;
     expect(r.components.find((c) => c.code === 'HRA')!.monthly).toBe(Math.round(r.monthlyGross * 0.25)); void basic;
     expect(Math.abs(r.checkCtc - 240000)).toBeLessThanOrEqual(12);
   });
   it('50% wage rule adds deemed wages when basic is too low', () => {
-    const r = splitCtc({ annualCtc: 1200000, metro: true, pfCapMode: 'actual', state: 'MH', template: [
+    const r = splitCtc({ annualCtc: 1200000, employerCostInCtc: true, metro: true, pfCapMode: 'actual', state: 'MH', template: [
       { code: 'BASIC', name: 'Basic', calc: 'pct_gross', value: 0.3, isWage: true, taxable: 'full' },
       { code: 'SPECIAL', name: 'Special', calc: 'balance', isWage: false, taxable: 'full' },
     ] });

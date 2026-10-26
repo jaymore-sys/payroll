@@ -32,6 +32,8 @@ export const companies = pgTable('company', {
   pfCapMode: text('pf_cap_mode').notNull().default('capped'),
   labourCodeMode: boolean('labour_code_mode').notNull().default(true),
   twoPersonRule: boolean('two_person_rule').notNull().default(false),
+  /** Off when the company is not registered under ESI (RazorpayX: ESIC "Company Disabled"). */
+  esiEnabled: boolean('esi_enabled').notNull().default(true),
   employeeCodePrefix: text('employee_code_prefix').notNull().default('EMP'),
   nextEmployeeSeq: integer('next_employee_seq').notNull().default(1),
   /** Weekly-off pattern for leave counting: 0 = Sunday; offSaturdaysOfMonth e.g. [2, 4]. */

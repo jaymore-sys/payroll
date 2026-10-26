@@ -24,8 +24,16 @@ export const DEFAULT_TEMPLATE: ComponentDef[] = [
 
 export interface CtcInput {
   annualCtc: number;
-  /** Give the monthly gross instead of CTC: the structure is split from it directly (CTC is then gross + employer costs). */
+  /** Give the monthly gross instead of CTC: the structure is split from it directly. */
   monthlyGross?: number;
+  /**
+   * false (default, RazorpayX style): CTC = gross × 12 + variable; employer PF/ESI/gratuity are shown as employer cost on top.
+   * true: CTC includes employer costs, so the gross is solved from it (spec §5).
+   */
+  employerCostInCtc?: boolean;
+  pfOptOut?: boolean;
+  internationalWorker?: boolean;
+  esiExempt?: boolean;
   annualVariable?: number;
   metro: boolean;
   pfCapMode: 'capped' | 'actual';
@@ -60,7 +68,7 @@ function build(gross: Decimal, i: CtcInput, tpl: ComponentDef[], rules: Statutor
   const effWages = wages.plus(i.labourCodeMode === false ? 0 : deemed);
   const month = i.asOf ?? new Date().toISOString().slice(0, 7);
   const stat = computeStatutory(
-    { gender: i.gender ?? 'M', state: i.state, age: i.age ?? 30, doj: i.doj ?? `${month}-01`, pfCapMode: i.pfCapMode },
+    { gender: i.gender ?? 'M', state: i.state, age: i.age ?? 30, doj: i.doj ?? `${month}-01`, pfCapMode: i.pfCapMode, pfOptOut: i.pfOptOut, internationalWorker: i.internationalWorker, esiExempt: i.esiExempt },
     { month, pfWage: n(effWages), esiGross: n(gross), grossMonthly: n(gross), payableDays: 30, wages: n(effWages) },
     rules,
   );
@@ -70,7 +78,7 @@ function build(gross: Decimal, i: CtcInput, tpl: ComponentDef[], rules: Statutor
   return { amt, wages, deemed, stat, employerCost: erPf.plus(erEsi).plus(grat), erPf, erEsi, grat };
 }
 
-/** CTC split algorithm (spec §5): solve monthly gross so gross + employer costs = monthly CTC. */
+/** CTC split (spec §5). By default CTC is gross × 12 + variable; with employerCostInCtc the gross is solved so gross + employer costs = monthly CTC. */
 export function splitCtc(i: CtcInput, rules: StatutoryRule[] = STATUTORY_RULES, taxRules: TaxRule[] = TAX_RULES) {
   const tpl = i.template ?? DEFAULT_TEMPLATE;
   const variable = D(i.annualVariable ?? 0);
@@ -78,6 +86,10 @@ export function splitCtc(i: CtcInput, rules: StatutoryRule[] = STATUTORY_RULES, 
   let r: ReturnType<typeof build>;
   if (i.monthlyGross) {
     gross = rupee(D(i.monthlyGross));
+  } else if (!i.employerCostInCtc) {
+    const monthlyCtc = D(i.annualCtc).minus(variable).dividedBy(12);
+    if (monthlyCtc.lte(0)) throw new Error('CTC must exceed variable pay');
+    gross = rupee(monthlyCtc);
   } else {
     const monthlyCtc = D(i.annualCtc).minus(variable).dividedBy(12);
     if (monthlyCtc.lte(0)) throw new Error('CTC must exceed variable pay');
@@ -122,7 +134,7 @@ export function splitCtc(i: CtcInput, rules: StatutoryRule[] = STATUTORY_RULES, 
     wages: n(r.wages), deemedWages: n(r.deemed),
     tds: { new: n(tdsNew), old: n(tdsOld), recommended: tax.recommended },
     takeHome: { new: n(gross.minus(empPf).minus(empEsi).minus(pt).minus(tdsNew)), old: n(gross.minus(empPf).minus(empEsi).minus(pt).minus(tdsOld)) },
-    checkCtc: n(gross.plus(r.employerCost).times(12).plus(variable)),
+    checkCtc: n((i.employerCostInCtc ? gross.plus(r.employerCost) : gross).times(12).plus(variable)),
     statutory: r.stat,
     warnings,
   };

@@ -31,6 +31,7 @@ function CompanyForm({ c, edit }: { c: any; edit: boolean }) {
           <Field label="Financial year starts"><Select disabled={!edit} value={v.fyStartMonth} onChange={(e) => setV({ ...v, fyStartMonth: Number(e.target.value) })}><option value={4}>April</option><option value={1}>January</option></Select></Field>
           <div className="space-y-3 sm:col-span-2">
             <Switch checked={v.labourCodeMode} onChange={(x) => edit && setV({ ...v, labourCodeMode: x })} label="Labour Code mode (50% wage rule for PF/ESI/gratuity)" />
+            <Switch checked={v.esiEnabled} onChange={(x) => edit && setV({ ...v, esiEnabled: x })} label="ESI registered (deduct ESI for gross up to ₹21,000)" />
           </div>
         </div>
         {edit && <div className="mt-5 flex justify-end"><Button loading={save.isPending} onClick={() => save.mutate()}>Save changes</Button></div>}</Card>

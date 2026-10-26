@@ -35,7 +35,9 @@ const payFields = {
   esiIp: z.string().regex(/^\d{10}$/, 'ESI IP must be 10 digits').nullish().or(z.literal('').transform(() => null)),
   pfOptOut: z.boolean(), international: z.boolean(), taxRegime: z.enum(['new', 'old']), metro: z.boolean(),
 };
-const createSchema = z.object({ ...personal, ...payFields, code: z.string().regex(/^[A-Z0-9-]{2,20}$/).optional(), createLogin: z.boolean().default(false), annualCtc: z.number().positive().max(1e9).optional(), monthlyGross: z.number().positive().max(1e8).optional() })
+/** Exact monthly salary components (e.g. copied from RazorpayX's Master CTC Report). */
+const componentsSchema = z.array(z.object({ code: z.string().regex(/^[A-Z0-9_]{2,20}$/), name: z.string().min(1).max(60), monthly: z.number().min(0).max(1e8), isWage: z.boolean() })).min(1).max(20);
+const createSchema = z.object({ ...personal, ...payFields, code: z.string().regex(/^[A-Z0-9-]{2,20}$/).optional(), createLogin: z.boolean().default(false), annualCtc: z.number().positive().max(1e9).optional(), monthlyGross: z.number().positive().max(1e8).optional(), components: componentsSchema.optional() })
   .partial({ pfOptOut: true, international: true, taxRegime: true, metro: true, noticeDays: true, employmentType: true });
 
 /** Encrypt sensitive inputs; only last-4 is kept in clear for masked display. Full Aadhaar is never stored. */
@@ -140,14 +142,20 @@ async function salaryFor(cid: string, empId: string) {
   return { e: e.row, state: e.state ?? 'MH', metro: e.row.metro || !!e.branchMetro, company: c };
 }
 
-/** pay: monthly gross (how the company sets salaries) or annual CTC. */
-export async function createRevision(req: any, empId: string, pay: { annualCtc?: number; monthlyGross?: number }, annualVariable: number, effectiveFrom: string) {
+type Components = { code: string; name: string; monthly: number; isWage: boolean }[];
+/** pay: monthly gross (how the company sets salaries), annual CTC, or exact monthly components (e.g. from RazorpayX). */
+export async function createRevision(req: any, empId: string, pay: { annualCtc?: number; monthlyGross?: number; components?: Components }, annualVariable: number, effectiveFrom: string) {
   const cid = req.user.cid;
   const { e, state, metro, company } = await salaryFor(cid, empId);
   const { stat, tax } = await loadRules();
   const age = e.dob ? new Date(effectiveFrom).getFullYear() - new Date(e.dob).getFullYear() : 30;
-  const preview = splitCtc({ annualCtc: pay.annualCtc ?? 0, monthlyGross: pay.monthlyGross, annualVariable, metro, state, pfCapMode: company.pfCapMode as 'capped' | 'actual', gender: e.gender === 'F' ? 'F' : 'M', age, doj: e.doj, asOf: effectiveFrom.slice(0, 7), labourCodeMode: company.labourCodeMode }, stat, tax);
-  const annualCtc = pay.monthlyGross ? preview.checkCtc : pay.annualCtc!;
+  const template = pay.components?.map((c) => ({ code: c.code, name: c.name, calc: 'fixed' as const, value: c.monthly, isWage: c.isWage, taxable: c.code === 'HRA' ? 'partial' as const : 'full' as const }));
+  const monthlyGross = template ? pay.components!.reduce((a, c) => a + c.monthly, 0) : pay.monthlyGross;
+  // PF/ESI shown with today's rules for an old joining date (payroll itself always uses the payroll month's rules).
+  const asOf = [effectiveFrom.slice(0, 7), new Date().toISOString().slice(0, 7)].sort()[1];
+  const preview = splitCtc({ annualCtc: pay.annualCtc ?? 0, monthlyGross, annualVariable, metro, state, pfCapMode: company.pfCapMode as 'capped' | 'actual', gender: e.gender === 'F' ? 'F' : 'M', age, doj: e.doj, asOf, labourCodeMode: company.labourCodeMode,
+    template, pfOptOut: e.pfOptOut, internationalWorker: e.international, esiExempt: !company.esiEnabled }, stat, tax);
+  const annualCtc = preview.checkCtc;
   return db.transaction(async (tx) => {
     const dayBefore = new Date(new Date(effectiveFrom).getTime() - 864e5).toISOString().slice(0, 10);
     const [prev] = await tx.select().from(S).where(and(eq(S.companyId, cid), eq(S.employeeId, empId), isNull(S.effectiveTo))).orderBy(desc(S.effectiveFrom)).limit(1);
@@ -170,7 +178,7 @@ employeesRouter.post('/employees', requireRole('COMPANY_ADMIN'), h(async (req, r
   const cid = req.user!.cid;
   await assertRefs(cid, d);
   const code = d.code ?? (await nextCode(cid));
-  const { pan, bank, aadhaar, createLogin, annualCtc, monthlyGross, code: _c, ...rest } = d;
+  const { pan, bank, aadhaar, createLogin, annualCtc, monthlyGross, components, code: _c, ...rest } = d;
   const [row] = await db.insert(E).values({ ...rest, code, companyId: cid, createdBy: req.user!.sub, ...sensitiveColumns({ pan, bank, aadhaar }) } as typeof E.$inferInsert).returning();
   await creditJoinerLeave(cid, row.id, row.doj, row.gender, req.user!.sub);
   let tempPassword: string | undefined;
@@ -178,7 +186,7 @@ employeesRouter.post('/employees', requireRole('COMPANY_ADMIN'), h(async (req, r
     tempPassword = `Pp-${randomToken(9)}1a`;
     await db.insert(schema.users).values({ companyId: cid, email: row.workEmail, passwordHash: await hashPassword(tempPassword), roles: ['EMPLOYEE'], employeeId: row.id });
   }
-  if (monthlyGross || annualCtc) await createRevision(req, row.id, { monthlyGross, annualCtc }, 0, row.doj);
+  if (monthlyGross || annualCtc || components) await createRevision(req, row.id, { monthlyGross, annualCtc, components }, 0, row.doj);
   await audit(req, 'create', 'employee', row.id, undefined, { ...row, panEnc: undefined, bankEnc: undefined });
   res.status(201).json({ id: row.id, code: row.code, tempPassword });
 }));
@@ -280,15 +288,15 @@ employeesRouter.post('/ctc/preview', requireRole('COMPANY_ADMIN', 'PAYROLL_MANAG
   const [c] = await db.select().from(schema.companies).where(eq(schema.companies.id, req.user!.cid));
   const { stat, tax } = await loadRules();
   try {
-    res.json(splitCtc({ ...d, pfCapMode: d.pfCapMode ?? (c.pfCapMode as 'capped' | 'actual'), labourCodeMode: c.labourCodeMode }, stat, tax));
+    res.json(splitCtc({ ...d, pfCapMode: d.pfCapMode ?? (c.pfCapMode as 'capped' | 'actual'), labourCodeMode: c.labourCodeMode, esiExempt: !c.esiEnabled, asOf: new Date().toISOString().slice(0, 7) }, stat, tax));
   } catch (e) { throw new ApiError(422, 'ctc_invalid', (e as Error).message); }
 }));
 
 employeesRouter.post('/employees/:id/salary-revisions', requireRole('COMPANY_ADMIN', 'PAYROLL_MANAGER'), h(async (req, res) => {
   await employeeAccess(req, req.params.id);
-  const d = parse(z.object({ annualCtc: z.number().positive().max(1e9).optional(), monthlyGross: z.number().positive().max(1e8).optional(), annualVariable: z.number().min(0).default(0), effectiveFrom: z.string().date() })
-    .refine((x) => x.monthlyGross || x.annualCtc, 'Enter the monthly gross'), req.body);
-  res.status(201).json(await createRevision(req, req.params.id, { monthlyGross: d.monthlyGross, annualCtc: d.annualCtc }, d.annualVariable, d.effectiveFrom));
+  const d = parse(z.object({ annualCtc: z.number().positive().max(1e9).optional(), monthlyGross: z.number().positive().max(1e8).optional(), components: componentsSchema.optional(), annualVariable: z.number().min(0).default(0), effectiveFrom: z.string().date() })
+    .refine((x) => x.monthlyGross || x.annualCtc || x.components, 'Enter the monthly gross'), req.body);
+  res.status(201).json(await createRevision(req, req.params.id, { monthlyGross: d.monthlyGross, annualCtc: d.annualCtc, components: d.components }, d.annualVariable, d.effectiveFrom));
 }));
 
 employeesRouter.get('/employees/:id/salary-structures', h(async (req, res) => {

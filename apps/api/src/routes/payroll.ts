@@ -189,7 +189,7 @@ payrollRouter.post('/payroll-runs/:id/calculate', requireRole(...ADMIN), h(async
         month: run.month, components: breakup.components, deemedWages: Number(s.deemedWages),
         employee: {
           gender: e.gender === 'F' ? 'F' : 'M', state: br?.state ?? 'MH', age, doj: e.doj, lastWorkingDay: e.lastWorkingDay, pfCapMode: s.pfCapMode as 'capped' | 'actual',
-          pfOptOut: e.pfOptOut, internationalWorker: e.international, regime: e.taxRegime as 'new' | 'old', ageBand: age >= 80 ? '80plus' : age >= 60 ? '60to79' : 'below60',
+          pfOptOut: e.pfOptOut, internationalWorker: e.international, esiExempt: !company.esiEnabled, regime: e.taxRegime as 'new' | 'old', ageBand: age >= 80 ? '80plus' : age >= 60 ? '60to79' : 'below60',
           metro: e.metro || !!br?.metro, hasPan: !!e.panEnc,
         },
         payableDaysMethod: company.payableDaysMethod as 'calendar' | 'fixed30' | 'working',

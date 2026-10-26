@@ -13,6 +13,8 @@ export interface StatEmployee {
   disabled?: boolean;
   /** ESI covered at the start of the contribution period (Apr–Sep / Oct–Mar). Overrides the monthly test. */
   esiCoveredThisPeriod?: boolean;
+  /** Company not registered under ESI (RazorpayX: ESIC "Company Disabled"): no ESI at all. */
+  esiExempt?: boolean;
 }
 export interface MonthInputs {
   month: string;      // YYYY-MM
@@ -52,7 +54,7 @@ export function computeStatutory(e: StatEmployee, m: MonthInputs, rules: Statuto
   /* ESI */
   const esiR = ruleAsOf<EsiParams>(rules, 'esi', asOf);
   let esi = null as null | Record<string, number | string | boolean>;
-  if (esiR) {
+  if (esiR && !e.esiExempt) {
     const p = esiR.params;
     const limit = e.disabled ? p.pwdGrossLimit : p.grossLimit;
     const covered = e.esiCoveredThisPeriod ?? D(m.esiGross).lte(limit);

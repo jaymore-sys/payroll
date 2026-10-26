@@ -49,7 +49,8 @@ export function annualTax(rule: TaxRule, taxableIn: Num) {
   const afterRebate = slab.minus(reb);
   const sur = surcharge(rule, taxable, afterRebate);
   const cess = afterRebate.plus(sur).times(rule.cessRate);
-  const total = afterRebate.plus(sur).plus(cess).dividedBy(10).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).times(10);
+  // Rounded to the rupee like RazorpayX's Tax Computation Report (not to ₹10 as in the return under s.288B).
+  const total = afterRebate.plus(sur).plus(cess).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
   return { taxable: n(taxable), slabTax: n(rupee(slab)), rebate: n(rupee(reb)), surcharge: n(rupee(sur)), cess: n(rupee(cess)), totalTax: n(total) };
 }
 
