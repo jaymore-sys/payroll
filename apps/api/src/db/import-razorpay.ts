@@ -5,6 +5,7 @@
  *   npm run import:razorpay -- --ctc "Master CTC Report.xlsx" --register "HR Register.csv" --admin you@co.com --password "..." --yes
  * Stop `npm run dev` first when using the built-in database.
  */
+import 'dotenv/config'; // DATABASE_URL from apps/api/.env
 import ExcelJS from 'exceljs';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';

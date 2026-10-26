@@ -1,10 +1,11 @@
 /**
  * Copy every table into one SQLite file you can open in DB Browser for SQLite. Read-only for PayrollPro:
- * the app keeps using its own database; this is a snapshot. Stop `npm run dev` first (embedded database).
+ * the app keeps using its own database; this is a snapshot. With the built-in database, stop `npm run dev` first.
  *   npm run export:sqlite            → payrollpro.db in the project folder
  *   npm run export:sqlite -- out.db  → another file name
  * PAN, bank and Aadhaar stay encrypted (only the last 4 digits are readable); passwords and sign-in tokens are left out.
  */
+import 'dotenv/config'; // uses DATABASE_URL from apps/api/.env when set
 import { existsSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite'; // Node 22.5+
