@@ -1,6 +1,7 @@
 {
   "name": "payrollpro",
   "private": true,
+  "type": "module",
   "workspaces": [
     "packages/*",
     "apps/*"

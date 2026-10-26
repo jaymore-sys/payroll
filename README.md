@@ -47,7 +47,7 @@ One process serves both the API and the web app; data lives in `~/payrollpro-dat
 | Node version | 22 |
 | Root directory | `/` (repo root) |
 | Build command | `npm run build` |
-| Start command / entry | `npm start` |
+| Entry file | `server.js` |
 | Environment variables | `NODE_ENV=production`, `COMPANY_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` (used once, on first start, to create your company and login) |
 
 Back up `~/payrollpro-data` (it holds the database and the encryption key — without the key, saved PAN/bank numbers cannot be read).
