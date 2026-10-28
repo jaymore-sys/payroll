@@ -23,7 +23,7 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use('/api', helmet({ contentSecurityPolicy: { directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] } }, crossOriginResourcePolicy: { policy: 'same-site' } }));
 app.use(cors({ origin: env.CORS_ORIGIN.split(','), credentials: true, allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'] }));
-app.use(restoreRouter); // before the 4 MB JSON limit; disabled unless RESTORE_TOKEN is set
+app.use(restoreRouter); // before the 4 MB JSON limit; admin-only, empty server only
 app.use(express.json({ limit: '4mb' }));
 app.use(cookieParser());
 app.use('/api', rateLimit({ windowMs: 60_000, limit: isProd ? 300 : 3000, standardHeaders: 'draft-7', legacyHeaders: false }));

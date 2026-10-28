@@ -1,19 +1,20 @@
-import { timingSafeEqual } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import express, { Router } from 'express';
 import { db } from '../db';
+import { requireAuth, requireRole } from './auth';
+import { encrypt } from './crypto';
 import { ApiError, h } from './http';
 
 /**
- * Copy a whole database into this server (e.g. the laptop's PostgreSQL → the hosted site). Off unless RESTORE_TOKEN
- * (32+ characters) is set on the server; the caller sends it as X-Restore-Token. Replaces ALL data. Remove the token after use.
+ * First load of a new server: copy a whole database into it (e.g. the laptop's PostgreSQL → the hosted site).
+ * Company Admin only, and only while this server has no employees yet, so it can never wipe live payroll data.
  * The dump is { table: rows-as-JSON }; Postgres converts the JSON back to each column's type (jsonb_populate_recordset).
+ * Encrypted columns (*_enc) arrive decrypted over HTTPS and are encrypted here with this server's own key.
  */
 export const restoreRouter = Router();
-restoreRouter.post('/api/restore', express.json({ limit: '50mb' }), h(async (req, res) => {
-  const token = process.env.RESTORE_TOKEN ?? '', given = String(req.headers['x-restore-token'] ?? '');
-  const ok = token.length >= 32 && given.length === token.length && timingSafeEqual(Buffer.from(given), Buffer.from(token));
-  if (!ok) throw new ApiError(404, 'not_found', 'Route not found');
+restoreRouter.post('/api/v1/restore', express.json({ limit: '50mb' }), requireAuth, requireRole('COMPANY_ADMIN'), h(async (req, res) => {
+  const [{ n }] = ((await db.execute(sql`select count(*)::int n from employee`)) as unknown as { rows: { n: number }[] }).rows;
+  if (n > 0) throw new ApiError(409, 'not_empty', 'This server already has employees; copying is only for setting up an empty server');
   const dump = req.body?.tables as Record<string, unknown[]> | undefined;
   if (!dump || typeof dump !== 'object') throw new ApiError(422, 'invalid', 'Expected { tables: { name: rows[] } }');
   const rows = async <T>(q: ReturnType<typeof sql>) => ((await db.execute(q)) as unknown as { rows: T[] }).rows;
@@ -26,6 +27,7 @@ restoreRouter.post('/api/restore', express.json({ limit: '50mb' }), h(async (req
     await tx.execute(sql.raw(`truncate ${here.map((t) => `"${t}"`).join(', ')} cascade`));
     for (const [t, data] of Object.entries(dump)) {
       if (!Array.isArray(data) || !data.length) { counts[t] = 0; continue; }
+      for (const r of data as Record<string, unknown>[]) for (const k of Object.keys(r)) if (k.endsWith('_enc') && typeof r[k] === 'string') r[k] = encrypt(r[k] as string);
       await tx.execute(sql`insert into ${sql.identifier(t)} select * from jsonb_populate_recordset(null::${sql.identifier(t)}, ${JSON.stringify(data)}::jsonb)`);
       counts[t] = data.length;
     }
