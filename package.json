@@ -21,7 +21,8 @@
     "export:sqlite": "npm run export:sqlite -w @payrollpro/api",
     "db:copy-to-postgres": "npm run db:copy-to-postgres -w @payrollpro/api",
     "import:razorpay": "npm run import:razorpay -w @payrollpro/api --",
-    "reset-password": "npm run reset-password -w @payrollpro/api --"
+    "reset-password": "npm run reset-password -w @payrollpro/api --",
+    "push-to-live": "npm run push-to-live -w @payrollpro/api --"
   },
   "engines": {
     "node": ">=20"

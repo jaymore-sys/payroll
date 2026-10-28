@@ -15,7 +15,8 @@
     "export:sqlite": "tsx src/db/export-sqlite.ts",
     "db:copy-to-postgres": "tsx src/db/copy-to-postgres.ts",
     "import:razorpay": "tsx src/db/import-razorpay.ts",
-    "reset-password": "tsx src/db/reset-password.ts"
+    "reset-password": "tsx src/db/reset-password.ts",
+    "push-to-live": "tsx src/db/push-to-live.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.2.17",

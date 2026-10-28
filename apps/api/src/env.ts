@@ -8,13 +8,14 @@ import { z } from 'zod';
 export const DATA_DIR = process.env.PAYROLLPRO_DATA_DIR
   ?? (process.env.NODE_ENV === 'production' ? `${homedir()}/payrollpro-data` : fileURLToPath(new URL('../.data', import.meta.url)));
 
+mkdirSync(DATA_DIR, { recursive: true }); // also when secrets come from the environment: the embedded database lives here
+
 /**
  * Zero-config: missing secrets are generated once and kept in DATA_DIR/dev-secrets.json (git-ignored, file mode 600).
  * Back this file up with the database: without FIELD_ENCRYPTION_KEY, stored PAN and bank numbers cannot be read.
  */
 if ((!process.env.JWT_SECRET || !process.env.FIELD_ENCRYPTION_KEY)) {
   const file = `${DATA_DIR}/dev-secrets.json`; // fine on Windows too: Node accepts forward slashes
-  mkdirSync(DATA_DIR, { recursive: true });
   if (!existsSync(file)) writeFileSync(file, JSON.stringify({ JWT_SECRET: randomBytes(48).toString('base64'), FIELD_ENCRYPTION_KEY: randomBytes(32).toString('base64') }), { mode: 0o600 });
   const s = JSON.parse(readFileSync(file, 'utf8'));
   process.env.JWT_SECRET ||= s.JWT_SECRET;
