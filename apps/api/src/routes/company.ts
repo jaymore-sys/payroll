@@ -1,8 +1,8 @@
 import { and, asc, eq } from 'drizzle-orm';
-import type { PgTable } from 'drizzle-orm/pg-core';
+import type { MySqlTable } from 'drizzle-orm/mysql-core';
 import { Router } from 'express';
 import { z, type ZodObject, type ZodRawShape } from 'zod';
-import { db, schema } from '../db';
+import { db, deleteReturning, insertReturning, schema, updateReturning } from '../db';
 import type { Role } from '../db/schema';
 import { audit } from '../lib/audit';
 import { needsRecalc } from '../lib/runs';
@@ -31,14 +31,14 @@ companyRouter.get('/company', h(async (req, res) => {
 companyRouter.put('/company', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const data = parse(companySchema, req.body);
   const [before] = await db.select().from(C).where(eq(C.id, req.user!.cid));
-  const [after] = await db.update(C).set(data).where(eq(C.id, req.user!.cid)).returning();
+  const [after] = await updateReturning(C, data, eq(C.id, req.user!.cid));
   await needsRecalc(req.user!.cid);
   await audit(req, 'update', 'company', after.id, before, after);
   res.json(after);
 }));
 
 /** Company-scoped CRUD for simple master tables. companyId always comes from the token, never the body. */
-function crud(path: string, table: PgTable & { id: any; companyId: any }, body: ZodObject<ZodRawShape>, readRoles: Role[] | 'all', order: any) {
+function crud(path: string, table: MySqlTable & { id: any; companyId: any }, body: ZodObject<ZodRawShape>, readRoles: Role[] | 'all', order: any) {
   const scope = (cid: string, id?: string) => (id ? and(eq(table.companyId, cid), eq(table.id, id)) : eq(table.companyId, cid));
   const read = readRoles === 'all' ? [] : [requireRole(...readRoles)];
   companyRouter.get(`/${path}`, ...read, h(async (req, res) => {
@@ -46,7 +46,7 @@ function crud(path: string, table: PgTable & { id: any; companyId: any }, body: 
   }));
   companyRouter.post(`/${path}`, requireRole('COMPANY_ADMIN'), h(async (req, res) => {
     const data = parse(body, req.body);
-    const [row] = await db.insert(table).values({ ...data, companyId: req.user!.cid } as any).returning();
+    const [row] = await insertReturning(table, { ...data, companyId: req.user!.cid } as any);
     await audit(req, 'create', path, (row as any).id, undefined, row);
     res.status(201).json(row);
   }));
@@ -54,12 +54,12 @@ function crud(path: string, table: PgTable & { id: any; companyId: any }, body: 
     const data = parse(body.partial(), req.body);
     const [before] = await db.select().from(table).where(scope(req.user!.cid, req.params.id));
     if (!before) throw notFound();
-    const [row] = await db.update(table).set(data as any).where(scope(req.user!.cid, req.params.id)).returning();
+    const [row] = await updateReturning(table, data as any, scope(req.user!.cid, req.params.id));
     await audit(req, 'update', path, req.params.id, before, row);
     res.json(row);
   }));
   companyRouter.delete(`/${path}/:id`, requireRole('COMPANY_ADMIN'), h(async (req, res) => {
-    const [row] = await db.delete(table).where(scope(req.user!.cid, req.params.id)).returning();
+    const [row] = await deleteReturning(table, scope(req.user!.cid, req.params.id));
     if (!row) throw notFound();
     await audit(req, 'delete', path, req.params.id, row);
     res.status(204).end();

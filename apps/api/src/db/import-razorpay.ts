@@ -16,7 +16,7 @@ import request from 'supertest';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { app } from '../app';
 import { hashPassword, signAccess } from '../lib/auth';
-import { closeDb, db, migrateDb, schema } from './index';
+import { closeDb, db, insertReturning, migrateDb, schema, wipeAll } from './index';
 import { createCompany, seedRules } from './seed';
 
 const { values: a } = parseArgs({ options: {
@@ -92,10 +92,7 @@ function componentsOf(r: CtcRow) {
 /* ---------- wipe and set up the company (skipped with --salaries-only) ---------- */
 await migrateDb();
 if (!salariesOnly) {
-  const keep = ['statutory_rule', 'tax_rule'];
-  const tables = ((await db.execute(sql`select tablename from pg_tables where schemaname = 'public'`)) as unknown as { rows: { tablename: string }[] }).rows
-    .map((r) => r.tablename).filter((t) => !keep.includes(t));
-  await db.execute(sql.raw(`truncate ${tables.map((t) => `"${t}"`).join(', ')} cascade`));
+  await wipeAll(['statutory_rule', 'tax_rule']);
   await seedRules();
   await createCompany(a.company!, a.admin, `Tmp-${Date.now()}aA9`);
 }
@@ -104,7 +101,7 @@ if (!admin) { console.error(`No login ${a.admin}`); process.exit(1); }
 const [company] = await db.select().from(schema.companies).where(eq(schema.companies.id, admin.companyId));
 await db.update(schema.companies).set({ esiEnabled: false }).where(eq(schema.companies.id, company.id)); // RazorpayX: ESIC "Company Disabled"
 const [branch] = salariesOnly ? await db.select().from(schema.branches).where(eq(schema.branches.companyId, company.id))
-  : await db.insert(schema.branches).values({ companyId: company.id, name: 'Mumbai', state: 'MH', city: 'Mumbai', metro: true }).returning();
+  : await insertReturning(schema.branches, { companyId: company.id, name: 'Mumbai', state: 'MH', city: 'Mumbai', metro: true });
 
 /* ---------- through the app's own API (same validation, salary split and audit as the UI) ---------- */
 const adminWasFlagged = admin.mustChangePassword;

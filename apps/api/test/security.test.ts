@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { app } from '../src/app';
-import { closeDb, db, embedded, migrateDb } from '../src/db';
+import { closeDb, db, migrateDb, rawRows } from '../src/db';
 import { seedCompany, seedRules } from '../src/db/seed';
 
 const PW = 'Test@Pass123';
@@ -16,11 +16,6 @@ const as = (who: string) => ({
 });
 
 beforeAll(async () => {
-  if (!embedded) {
-    await db.execute(sql`DROP SCHEMA IF EXISTS public CASCADE`);
-    await db.execute(sql`CREATE SCHEMA public`);
-    await db.execute(sql`DROP SCHEMA IF EXISTS drizzle CASCADE`);
-  }
   await migrateDb();
   await seedRules();
   A = await seedCompany('Alpha', 'alpha.test', PW, 12);
@@ -112,9 +107,9 @@ describe('tenant isolation and roles', () => {
 describe('sensitive data', () => {
   it('stores PAN encrypted, shows it masked, reveals only on audited request', async () => {
     const id = A.employeeIds[2];
-    const raw = await db.execute<{ pan_enc: string }>(sql`SELECT pan_enc FROM employee WHERE id = ${id}`);
-    expect(raw.rows[0].pan_enc).toMatch(/^v1\./);
-    expect(raw.rows[0].pan_enc).not.toMatch(/[A-Z]{5}\d{4}[A-Z]/);
+    const raw = await rawRows<{ pan_enc: string }>(sql`SELECT pan_enc FROM employee WHERE id = ${id}`);
+    expect(raw[0].pan_enc).toMatch(/^v1\./);
+    expect(raw[0].pan_enc).not.toMatch(/[A-Z]{5}\d{4}[A-Z]/);
     expect((await as('admin').get(`/employees/${id}`)).body.pan).toMatch(/^••••••/);
     const s = await as('admin').get(`/employees/${id}/sensitive`);
     expect(s.body.pan).toMatch(/^[A-Z]{5}\d{4}[A-Z]$/);

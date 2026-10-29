@@ -2,7 +2,7 @@ import { compareRegimes } from '@payrollpro/engines';
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import { Router } from 'express';
 import { z } from 'zod';
-import { db, schema } from '../db';
+import { db, insertReturning, schema } from '../db';
 import { audit } from '../lib/audit';
 import { teamIds } from '../lib/access';
 import { hashPassword, hasRole, requireRole } from '../lib/auth';
@@ -41,7 +41,7 @@ miscRouter.get('/dashboard', h(async (req, res) => {
   const u = req.user!, cid = u.cid, t = today();
   const [company] = await db.select().from(schema.companies).where(eq(schema.companies.id, cid));
   const holidays = await db.select({ date: schema.holidays.date, name: schema.holidays.name }).from(schema.holidays).where(and(eq(schema.holidays.companyId, cid), gte(schema.holidays.date, t))).orderBy(asc(schema.holidays.date)).limit(5);
-  const onLeaveToday = (ids?: string[]) => db.select({ name: sql<string>`${E.firstName} || ' ' || ${E.lastName}`, type: schema.leaveTypes.code })
+  const onLeaveToday = (ids?: string[]) => db.select({ name: sql<string>`concat(${E.firstName}, ' ', ${E.lastName})`, type: schema.leaveTypes.code })
     .from(LR).innerJoin(E, eq(E.id, LR.employeeId)).innerJoin(schema.leaveTypes, eq(schema.leaveTypes.id, LR.leaveTypeId))
     .where(and(eq(LR.companyId, cid), eq(LR.status, 'APPROVED'), lte(LR.fromDate, t), gte(LR.toDate, t), ...(ids ? [inArray(LR.employeeId, ids.length ? ids : ['00000000-0000-0000-0000-000000000000'])] : [])));
   const out: Record<string, unknown> = {
@@ -53,37 +53,41 @@ miscRouter.get('/dashboard', h(async (req, res) => {
 
   if (hasRole(u, 'COMPANY_ADMIN', 'PAYROLL_MANAGER')) {
     const active = and(eq(E.companyId, cid), inArray(E.status, ['ACTIVE', 'NOTICE']));
-    const [hc] = await db.select({ total: sql<number>`count(*)::int`, notice: sql<number>`count(*) filter (where ${E.status} = 'NOTICE')::int`, joiners: sql<number>`count(*) filter (where date_trunc('month', ${E.doj}) = date_trunc('month', now()))::int` }).from(E).where(active);
+    const [hc] = await db.select({ total: sql<number>`count(*)`.mapWith(Number), notice: sql<number>`sum(case when ${E.status} = 'NOTICE' then 1 else 0 end)`.mapWith(Number), joiners: sql<number>`sum(case when ${E.doj} >= ${t.slice(0, 8) + '01'} then 1 else 0 end)`.mapWith(Number) }).from(E).where(active);
     const current = and(eq(S.companyId, cid), lte(S.effectiveFrom, t), or(isNull(S.effectiveTo), gte(S.effectiveTo, t)));
-    const [cost] = await db.select({ gross: sql<number>`coalesce(sum(${S.monthlyGross}),0)::float`, employer: sql<number>`coalesce(sum(${S.employerCost}),0)::float`, ctc: sql<number>`coalesce(sum(${S.annualCtc}),0)::float` }).from(S).innerJoin(E, eq(E.id, S.employeeId)).where(and(current, inArray(E.status, ['ACTIVE', 'NOTICE'])));
-    const byDept = await db.select({ name: sql<string>`coalesce(${schema.departments.name}, 'Unassigned')`, headcount: sql<number>`count(distinct ${E.id})::int`, cost: sql<number>`coalesce(sum(${S.monthlyGross} + ${S.employerCost}),0)::float` })
+    const [cost] = await db.select({ gross: sql<number>`coalesce(sum(${S.monthlyGross}),0)`.mapWith(Number), employer: sql<number>`coalesce(sum(${S.employerCost}),0)`.mapWith(Number), ctc: sql<number>`coalesce(sum(${S.annualCtc}),0)`.mapWith(Number) }).from(S).innerJoin(E, eq(E.id, S.employeeId)).where(and(current, inArray(E.status, ['ACTIVE', 'NOTICE'])));
+    const byDept = await db.select({ name: sql<string>`coalesce(${schema.departments.name}, 'Unassigned')`, headcount: sql<number>`count(distinct ${E.id})`.mapWith(Number), cost: sql<number>`coalesce(sum(${S.monthlyGross} + ${S.employerCost}),0)`.mapWith(Number) })
       .from(E).leftJoin(schema.departments, eq(schema.departments.id, E.departmentId)).leftJoin(S, and(eq(S.employeeId, E.id), lte(S.effectiveFrom, t), or(isNull(S.effectiveTo), gte(S.effectiveTo, t))))
       .where(active).groupBy(schema.departments.name).orderBy(desc(sql`count(distinct ${E.id})`));
-    const trend = await db.execute<{ month: string; joiners: number; exits: number; headcount: number }>(sql`
-      WITH m AS (SELECT generate_series(date_trunc('month', now()) - interval '11 months', date_trunc('month', now()), interval '1 month')::date AS month)
-      SELECT to_char(m.month, 'Mon YY') AS month,
-        (SELECT count(*) FROM employee e WHERE e.company_id = ${cid} AND date_trunc('month', e.doj) = m.month)::int AS joiners,
-        (SELECT count(*) FROM employee e WHERE e.company_id = ${cid} AND date_trunc('month', e.last_working_day) = m.month)::int AS exits,
-        (SELECT count(*) FROM employee e WHERE e.company_id = ${cid} AND e.doj < m.month + interval '1 month' AND (e.last_working_day IS NULL OR e.last_working_day >= m.month))::int AS headcount
-      FROM m ORDER BY m.month`);
+    // Last 12 months: joiners, exits and headcount (counted here; a few hundred rows at most).
+    const people = await db.select({ doj: E.doj, lwd: E.lastWorkingDay }).from(E).where(eq(E.companyId, cid));
+    const trend = Array.from({ length: 12 }, (_, i) => {
+      const d = new Date(Date.UTC(Number(t.slice(0, 4)), Number(t.slice(5, 7)) - 12 + i, 1));
+      const m = d.toISOString().slice(0, 7), next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+      return {
+        month: d.toLocaleString('en-GB', { month: 'short', year: '2-digit', timeZone: 'UTC' }),
+        joiners: people.filter((p) => p.doj.startsWith(m)).length, exits: people.filter((p) => p.lwd?.startsWith(m)).length,
+        headcount: people.filter((p) => p.doj < next && (!p.lwd || p.lwd >= `${m}-01`)).length,
+      };
+    });
     const [ex] = await db.select({
-      noPan: sql<number>`count(*) filter (where ${E.panEnc} is null)::int`, noBank: sql<number>`count(*) filter (where ${E.bankEnc} is null)::int`,
-      noSalary: sql<number>`count(*) filter (where not exists (select 1 from salary_structure s where s.employee_id = "employee"."id"))::int`,
+      noPan: sql<number>`sum(case when ${E.panEnc} is null then 1 else 0 end)`.mapWith(Number), noBank: sql<number>`sum(case when ${E.bankEnc} is null then 1 else 0 end)`.mapWith(Number),
+      noSalary: sql<number>`sum(case when not exists (select 1 from salary_structure s where s.employee_id = ${E.id}) then 1 else 0 end)`.mapWith(Number),
     }).from(E).where(active);
     const month = t.slice(0, 7);
-    const [att] = await db.select({ n: sql<number>`count(*)::int` }).from(schema.attendanceMonths).where(and(eq(schema.attendanceMonths.companyId, cid), eq(schema.attendanceMonths.month, month)));
+    const [att] = await db.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(schema.attendanceMonths).where(and(eq(schema.attendanceMonths.companyId, cid), eq(schema.attendanceMonths.month, month)));
     const [run] = await db.select({ status: schema.payrollRuns.status, id: schema.payrollRuns.id }).from(schema.payrollRuns).where(and(eq(schema.payrollRuns.companyId, cid), eq(schema.payrollRuns.month, month)));
-    const [cr] = await db.select({ n: sql<number>`count(*)::int` }).from(schema.changeRequests).where(and(eq(schema.changeRequests.companyId, cid), eq(schema.changeRequests.status, 'PENDING')));
-    const gender = await db.select({ g: E.gender, n: sql<number>`count(*)::int` }).from(E).where(active).groupBy(E.gender);
+    const [cr] = await db.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(schema.changeRequests).where(and(eq(schema.changeRequests.companyId, cid), eq(schema.changeRequests.status, 'PENDING')));
+    const gender = await db.select({ g: E.gender, n: sql<number>`count(*)`.mapWith(Number) }).from(E).where(active).groupBy(E.gender);
     const activity = await db.select({ action: schema.auditLog.action, entity: schema.auditLog.entity, at: schema.auditLog.at, email: U.email })
       .from(schema.auditLog).leftJoin(U, eq(U.id, schema.auditLog.userId)).where(eq(schema.auditLog.companyId, cid)).orderBy(desc(schema.auditLog.at)).limit(8);
     Object.assign(out, {
-      admin: { headcount: hc, cost, byDept, trend: trend.rows, exceptions: ex, attendanceEntered: att.n, payrollRun: run ?? null, pendingChanges: cr.n, gender, activity, onLeaveToday: await onLeaveToday() },
+      admin: { headcount: hc, cost, byDept, trend, exceptions: ex, attendanceEntered: att.n, payrollRun: run ?? null, pendingChanges: cr.n, gender, activity, onLeaveToday: await onLeaveToday() },
     });
   }
   if (u.eid && hasRole(u, 'REPORTING_MANAGER')) {
     const ids = await teamIds(cid, u.eid);
-    const [p] = ids.length ? await db.select({ n: sql<number>`count(*)::int` }).from(schema.attendanceMonths).where(and(eq(schema.attendanceMonths.companyId, cid), eq(schema.attendanceMonths.month, t.slice(0, 7)), inArray(schema.attendanceMonths.employeeId, ids))) : [{ n: 0 }];
+    const [p] = ids.length ? await db.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(schema.attendanceMonths).where(and(eq(schema.attendanceMonths.companyId, cid), eq(schema.attendanceMonths.month, t.slice(0, 7)), inArray(schema.attendanceMonths.employeeId, ids))) : [{ n: 0 }];
     out.team = { size: ids.length, attendanceEntered: p.n };
   }
   if (u.eid) {
@@ -109,7 +113,7 @@ miscRouter.get('/audit', requireRole('COMPANY_ADMIN', 'PAYROLL_MANAGER'), h(asyn
   if (q.to) where.push(lte(A.at, new Date(q.to + 'T23:59:59Z')));
   const items = await db.select({ id: A.id, action: A.action, entity: A.entity, entityId: A.entityId, before: A.before, after: A.after, ip: A.ip, at: A.at, email: U.email })
     .from(A).leftJoin(U, eq(U.id, A.userId)).where(and(...where)).orderBy(desc(A.at)).limit(limit).offset(offset);
-  const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(A).where(and(...where));
+  const [{ n }] = await db.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(A).where(and(...where));
   res.json({ items, total: n, page: p, limit });
 }));
 
@@ -131,14 +135,14 @@ miscRouter.put('/notifications/:id/read', h(async (req, res) => {
 const roleList = z.array(z.enum(['COMPANY_ADMIN', 'PAYROLL_MANAGER', 'REPORTING_MANAGER', 'EMPLOYEE'])).min(1);
 const tempPassword = () => `Pp-${randomToken(9)}1a`;
 miscRouter.get('/users', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
-  res.json(await db.select({ id: U.id, email: U.email, roles: U.roles, active: U.active, totpEnabled: U.totpEnabled, lastLoginAt: U.lastLoginAt, lockedUntil: U.lockedUntil, employeeId: U.employeeId, name: sql<string | null>`${E.firstName} || ' ' || ${E.lastName}` })
+  res.json(await db.select({ id: U.id, email: U.email, roles: U.roles, active: U.active, totpEnabled: U.totpEnabled, lastLoginAt: U.lastLoginAt, lockedUntil: U.lockedUntil, employeeId: U.employeeId, name: sql<string | null>`concat(${E.firstName}, ' ', ${E.lastName})` })
     .from(U).leftJoin(E, eq(E.id, U.employeeId)).where(eq(U.companyId, req.user!.cid)).orderBy(asc(U.email)));
 }));
 miscRouter.post('/users', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const d = parse(z.object({ email: z.string().email().toLowerCase(), roles: roleList, employeeId: z.string().uuid().optional() }), req.body);
   if (d.employeeId) { const [e] = await db.select({ id: E.id }).from(E).where(and(eq(E.companyId, req.user!.cid), eq(E.id, d.employeeId))); if (!e) throw notFound('Employee'); }
   const pw = tempPassword();
-  const [row] = await db.insert(U).values({ companyId: req.user!.cid, email: d.email, roles: d.roles, employeeId: d.employeeId, passwordHash: await hashPassword(pw) }).returning({ id: U.id });
+  const [row] = await insertReturning(U, { companyId: req.user!.cid, email: d.email, roles: d.roles, employeeId: d.employeeId, passwordHash: await hashPassword(pw) });
   await audit(req, 'create', 'user', row.id, undefined, { email: d.email, roles: d.roles });
   res.status(201).json({ id: row.id, tempPassword: pw });
 }));

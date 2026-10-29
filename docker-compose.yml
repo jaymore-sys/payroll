@@ -1,17 +1,14 @@
-# Local development database. Production: managed PostgreSQL 16 in an India region (AWS ap-south-1 / Supabase Mumbai).
+# Local development database (MariaDB, like Hostinger). DATABASE_URL=mysql://payroll:payroll@127.0.0.1:3306/payrollpro
 services:
   db:
-    image: postgres:16-alpine
+    image: mariadb:11
     restart: unless-stopped
     environment:
-      POSTGRES_USER: payroll
-      POSTGRES_PASSWORD: payroll
-      POSTGRES_DB: payrollpro
-    ports: ["127.0.0.1:5432:5432"]   # bound to localhost only
-    volumes: [pgdata:/var/lib/postgresql/data]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U payroll"]
-      interval: 5s
-      retries: 10
+      MARIADB_USER: payroll
+      MARIADB_PASSWORD: payroll
+      MARIADB_DATABASE: payrollpro
+      MARIADB_ROOT_PASSWORD: payroll-root
+    ports: ["127.0.0.1:3306:3306"]   # bound to localhost only
+    volumes: [dbdata:/var/lib/mysql]
 volumes:
-  pgdata:
+  dbdata:

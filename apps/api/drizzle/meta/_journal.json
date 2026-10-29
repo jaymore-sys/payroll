@@ -1,54 +1,12 @@
 {
   "version": "7",
-  "dialect": "postgresql",
+  "dialect": "mysql",
   "entries": [
     {
       "idx": 0,
-      "version": "7",
-      "when": 1792656309798,
+      "version": "5",
+      "when": 1793252180832,
       "tag": "0000_init",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1792656310777,
-      "tag": "0001_audit_append_only",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1792669633390,
-      "tag": "0002_payroll_runs",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1792674309312,
-      "tag": "0003_attendance",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1792761433924,
-      "tag": "0004_consultants",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1793012640442,
-      "tag": "0005_must_change_password",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1793015374202,
-      "tag": "0006_esi_enabled",
       "breakpoints": true
     }
   ]

@@ -8,7 +8,7 @@ import { z } from 'zod';
 export const DATA_DIR = process.env.PAYROLLPRO_DATA_DIR
   ?? (process.env.NODE_ENV === 'production' ? `${homedir()}/payrollpro-data` : fileURLToPath(new URL('../.data', import.meta.url)));
 
-mkdirSync(DATA_DIR, { recursive: true }); // also when secrets come from the environment: the embedded database lives here
+mkdirSync(DATA_DIR, { recursive: true }); // keeps the generated secrets
 
 /**
  * Zero-config: missing secrets are generated once and kept in DATA_DIR/dev-secrets.json (git-ignored, file mode 600).
@@ -23,8 +23,8 @@ if ((!process.env.JWT_SECRET || !process.env.FIELD_ENCRYPTION_KEY)) {
 }
 
 const schema = z.object({
-  /** Empty = embedded PostgreSQL (PGlite) stored in .data/db — no database server needed. */
-  DATABASE_URL: z.string().url().optional().or(z.literal('').transform(() => undefined)),
+  /** MySQL / MariaDB: mysql://user:password@host:3306/database (password URL-encoded, e.g. @ → %40). */
+  DATABASE_URL: z.string({ required_error: 'DATABASE_URL is required, e.g. mysql://user:password@127.0.0.1:3306/payrollpro' }).regex(/^mysql:\/\//, 'DATABASE_URL must start with mysql://'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   FIELD_ENCRYPTION_KEY: z.string().refine((v) => Buffer.from(v, 'base64').length === 32, 'FIELD_ENCRYPTION_KEY must be 32 bytes, base64'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),

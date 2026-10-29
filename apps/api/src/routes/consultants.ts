@@ -3,7 +3,7 @@ import { and, asc, eq, gte, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import ExcelJS from 'exceljs';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { db, schema } from '../db';
+import { db, insertReturning, schema, updateReturning } from '../db';
 import { audit } from '../lib/audit';
 import { requireRole } from '../lib/auth';
 import { decryptJson, encrypt, encryptJson } from '../lib/crypto';
@@ -43,7 +43,7 @@ consultantsRouter.get('/consultants', requireRole(...ADMIN), h(async (req, res) 
 }));
 consultantsRouter.post('/consultants', requireRole(...ADMIN), h(async (req, res) => {
   const { pan, bank: b, ...d } = parse(body, req.body);
-  const [c] = await db.insert(C).values({ ...d, companyId: req.user!.cid, monthlyFee: String(d.monthlyFee), tdsRate: String(d.tdsRate), ...secrets({ pan, bank: b }, d.name) }).returning();
+  const [c] = await insertReturning(C, { ...d, companyId: req.user!.cid, monthlyFee: String(d.monthlyFee), tdsRate: String(d.tdsRate), ...secrets({ pan, bank: b }, d.name) });
   await audit(req, 'create', 'consultant', c.id, undefined, show(c));
   res.status(201).json(show(c));
 }));
@@ -51,8 +51,7 @@ consultantsRouter.put('/consultants/:id', requireRole(...ADMIN), h(async (req, r
   const { pan, bank: b, monthlyFee, tdsRate, ...d } = parse(body.partial(), req.body);
   const [old] = await db.select().from(C).where(and(eq(C.companyId, req.user!.cid), eq(C.id, req.params.id)));
   if (!old) throw notFound('Consultant');
-  const [c] = await db.update(C).set({ ...d, ...(monthlyFee !== undefined ? { monthlyFee: String(monthlyFee) } : {}), ...(tdsRate !== undefined ? { tdsRate: String(tdsRate) } : {}), ...secrets({ pan, bank: b }, d.name ?? old.name) })
-    .where(eq(C.id, old.id)).returning();
+  const [c] = await updateReturning(C, { ...d, ...(monthlyFee !== undefined ? { monthlyFee: String(monthlyFee) } : {}), ...(tdsRate !== undefined ? { tdsRate: String(tdsRate) } : {}), ...secrets({ pan, bank: b }, d.name ?? old.name) }, eq(C.id, old.id));
   await audit(req, 'update', 'consultant', c.id, show(old), show(c));
   res.json(show(c));
 }));
@@ -118,7 +117,7 @@ consultantsRouter.post('/consultant-runs/:month/calculate', requireRole(...ADMIN
   const dim = daysInMonth(month);
   // FY-to-date from approved months: amounts paid and TDS already deducted (for the ₹50,000 threshold).
   const fyFirst = `${taxYearOf(month).slice(0, 4)}-04`;
-  const ytd = new Map((await db.select({ c: P.consultantId, paid: sql<number>`sum(${P.amount})::float`, tds: sql<number>`sum(${P.tds})::float` }).from(P).innerJoin(R, eq(R.id, P.runId))
+  const ytd = new Map((await db.select({ c: P.consultantId, paid: sql<number>`sum(${P.amount})`.mapWith(Number), tds: sql<number>`sum(${P.tds})`.mapWith(Number) }).from(P).innerJoin(R, eq(R.id, P.runId))
     .where(and(eq(P.companyId, cid), eq(R.status, 'FINALISED'), gte(R.month, fyFirst), lt(R.month, month))).groupBy(P.consultantId)).map((r) => [r.c, r]));
   const rows = list.map((c) => {
     const i = input.get(c.id) ?? { lopDays: 0, adjustment: 0, note: null };
@@ -134,7 +133,7 @@ consultantsRouter.post('/consultant-runs/:month/calculate', requireRole(...ADMIN
   const sum = (k: 'amount' | 'tds' | 'net') => rows.reduce((a, r) => a + Number(r[k]), 0);
   const totals = { consultants: rows.length, amount: sum('amount'), tds: sum('tds'), net: sum('net') };
   await db.transaction(async (tx) => {
-    if (!run) [run] = await tx.insert(R).values({ companyId: cid, month, createdBy: req.user!.sub }).returning();
+    if (!run) [run] = await insertReturning(R, { companyId: cid, month, createdBy: req.user!.sub }, tx);
     await tx.delete(P).where(eq(P.runId, run.id));
     if (rows.length) await tx.insert(P).values(rows.map((r) => ({ ...r, runId: run!.id })));
     await tx.update(R).set({ status: 'CALCULATED', totals, calculatedAt: new Date() }).where(eq(R.id, run.id));
@@ -145,8 +144,7 @@ consultantsRouter.post('/consultant-runs/:month/calculate', requireRole(...ADMIN
 
 const setStatus = (to: 'FINALISED' | 'CALCULATED', from: 'CALCULATED' | 'FINALISED') => h(async (req: Request, res) => {
   const month = parse(MONTH, req.params.month);
-  const [u] = await db.update(R).set({ status: to, approvedAt: to === 'FINALISED' ? new Date() : null, approvedBy: to === 'FINALISED' ? req.user!.sub : null })
-    .where(and(eq(R.companyId, req.user!.cid), eq(R.month, month), eq(R.status, from))).returning({ id: R.id });
+  const [u] = await updateReturning(R, { status: to, approvedAt: to === 'FINALISED' ? new Date() : null, approvedBy: to === 'FINALISED' ? req.user!.sub : null }, and(eq(R.companyId, req.user!.cid), eq(R.month, month), eq(R.status, from)));
   if (!u) throw new ApiError(409, 'wrong_state', to === 'FINALISED' ? 'Calculate the payments before approving' : 'This month is not approved');
   await audit(req, to === 'FINALISED' ? 'approve' : 'reopen', 'consultant_run', u.id);
   res.json({ ok: true });

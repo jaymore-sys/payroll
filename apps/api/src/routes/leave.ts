@@ -2,7 +2,7 @@ import { leaveDays } from '@payrollpro/engines';
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, or, sql, type SQL } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { db, schema } from '../db';
+import { db, insertReturning, schema, updateReturning } from '../db';
 import { audit } from '../lib/audit';
 import { employeeAccess, notifyUsersOfEmployees, teamIds } from '../lib/access';
 import { hasRole, requireRole } from '../lib/auth';
@@ -23,27 +23,27 @@ const toDb = (d: Partial<z.infer<typeof typeSchema>>) => Object.fromEntries(Obje
 
 leaveRouter.get('/leave-types', h(async (req, res) => res.json(await db.select().from(LT).where(eq(LT.companyId, req.user!.cid)).orderBy(asc(LT.code)))));
 leaveRouter.post('/leave-types', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
-  const [row] = await db.insert(LT).values({ ...toDb(parse(typeSchema, req.body)), companyId: req.user!.cid } as any).returning();
+  const [row] = await insertReturning(LT, { ...toDb(parse(typeSchema, req.body)), companyId: req.user!.cid } as any);
   await audit(req, 'create', 'leave_type', row.id, undefined, row);
   res.status(201).json(row);
 }));
 leaveRouter.put('/leave-types/:id', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const [before] = await db.select().from(LT).where(and(eq(LT.companyId, req.user!.cid), eq(LT.id, req.params.id)));
   if (!before) throw notFound('Leave type');
-  const [row] = await db.update(LT).set(toDb(parse(typeSchema.partial(), req.body)) as any).where(eq(LT.id, before.id)).returning();
+  const [row] = await updateReturning(LT, toDb(parse(typeSchema.partial(), req.body)) as any, eq(LT.id, before.id));
   await audit(req, 'update', 'leave_type', row.id, before, row);
   res.json(row);
 }));
 
 /* ---------- balances & ledger ---------- */
-const signed = sql<number>`coalesce(sum(case when ${LL.kind} in ('credit','carry','adjust') then ${LL.days} else -${LL.days} end),0)::float`;
+const signed = sql<number>`coalesce(sum(case when ${LL.kind} in ('credit','carry','adjust') then ${LL.days} else -${LL.days} end),0)`.mapWith(Number);
 
 async function balances(cid: string, employeeId: string) {
   const [emp] = await db.select({ gender: E.gender }).from(E).where(eq(E.id, employeeId));
   const types = (await db.select().from(LT).where(and(eq(LT.companyId, cid), eq(LT.active, true))).orderBy(asc(LT.code))).filter((t) => !t.gender || t.gender === emp?.gender);
   const bal = await db.select({ t: LL.leaveTypeId, b: signed }).from(LL).where(and(eq(LL.companyId, cid), eq(LL.employeeId, employeeId))).groupBy(LL.leaveTypeId);
-  const pend = await db.select({ t: LR.leaveTypeId, d: sql<number>`coalesce(sum(${LR.daysCounted}),0)::float` }).from(LR).where(and(eq(LR.companyId, cid), eq(LR.employeeId, employeeId), eq(LR.status, 'PENDING'))).groupBy(LR.leaveTypeId);
-  const used = await db.select({ t: LL.leaveTypeId, d: sql<number>`coalesce(sum(${LL.days}),0)::float` }).from(LL).where(and(eq(LL.companyId, cid), eq(LL.employeeId, employeeId), eq(LL.kind, 'debit'))).groupBy(LL.leaveTypeId);
+  const pend = await db.select({ t: LR.leaveTypeId, d: sql<number>`coalesce(sum(${LR.daysCounted}),0)`.mapWith(Number) }).from(LR).where(and(eq(LR.companyId, cid), eq(LR.employeeId, employeeId), eq(LR.status, 'PENDING'))).groupBy(LR.leaveTypeId);
+  const used = await db.select({ t: LL.leaveTypeId, d: sql<number>`coalesce(sum(${LL.days}),0)`.mapWith(Number) }).from(LL).where(and(eq(LL.companyId, cid), eq(LL.employeeId, employeeId), eq(LL.kind, 'debit'))).groupBy(LL.leaveTypeId);
   return types.map((t) => ({
     leaveTypeId: t.id, code: t.code, name: t.name, paid: t.paid, quota: Number(t.quota), halfDay: t.halfDay,
     balance: bal.find((b) => b.t === t.id)?.b ?? 0, pending: pend.find((p) => p.t === t.id)?.d ?? 0, used: used.find((u) => u.t === t.id)?.d ?? 0,
@@ -67,7 +67,7 @@ leaveRouter.get('/leave/ledger', h(async (req, res) => {
 leaveRouter.post('/leave/adjust', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const d = parse(z.object({ employeeId: z.string().uuid(), leaveTypeId: z.string().uuid(), days: z.number().min(-366).max(366).refine((x) => x !== 0), note: z.string().min(2).max(200) }), req.body);
   await employeeAccess(req, d.employeeId);
-  const [row] = await db.insert(LL).values({ companyId: req.user!.cid, employeeId: d.employeeId, leaveTypeId: d.leaveTypeId, date: new Date().toISOString().slice(0, 10), kind: d.days > 0 ? 'adjust' : 'debit', days: String(Math.abs(d.days)), refType: 'manual', note: d.note, createdBy: req.user!.sub }).returning();
+  const [row] = await insertReturning(LL, { companyId: req.user!.cid, employeeId: d.employeeId, leaveTypeId: d.leaveTypeId, date: new Date().toISOString().slice(0, 10), kind: d.days > 0 ? 'adjust' : 'debit', days: String(Math.abs(d.days)), refType: 'manual', note: d.note, createdBy: req.user!.sub });
   await audit(req, 'leave_adjust', 'employee', d.employeeId, undefined, d);
   res.status(201).json(row);
 }));
@@ -102,7 +102,7 @@ async function evaluate(req: Request, d: z.infer<typeof reqSchema>) {
   const overlap = await db.select({ id: LR.id }).from(LR).where(and(eq(LR.companyId, cid), eq(LR.employeeId, employeeId), inArray(LR.status, ['PENDING', 'APPROVED']), lte(LR.fromDate, d.to), gte(LR.toDate, d.from)));
   if (overlap.length) errors.push('Overlaps an existing leave request');
   // Team members already off in this window (shown to employee and approver).
-  const teammates = emp.e.managerId ? await db.select({ name: sql<string>`${E.firstName} || ' ' || ${E.lastName}`, from: LR.fromDate, to: LR.toDate })
+  const teammates = emp.e.managerId ? await db.select({ name: sql<string>`concat(${E.firstName}, ' ', ${E.lastName})`, from: LR.fromDate, to: LR.toDate })
     .from(LR).innerJoin(E, eq(E.id, LR.employeeId)).where(and(eq(LR.companyId, cid), eq(E.managerId, emp.e.managerId), ne(E.id, employeeId), eq(LR.status, 'APPROVED'), lte(LR.fromDate, d.to), gte(LR.toDate, d.from))) : [];
   return { employeeId, type: t, emp: emp.e, ...calc, balance: bal.balance, available, balanceAfter: t.paid ? available - calc.counted : null, teamOff: teammates, errors };
 }
@@ -116,7 +116,7 @@ leaveRouter.post('/leave/requests', h(async (req, res) => {
   const d = parse(reqSchema, req.body);
   const r = await evaluate(req, d);
   if (r.errors.length) throw new ApiError(422, 'leave_invalid', r.errors[0], r.errors.map((m) => ({ message: m })));
-  const [row] = await db.insert(LR).values({ companyId: req.user!.cid, employeeId: r.employeeId, leaveTypeId: d.leaveTypeId, fromDate: d.from, toDate: d.to, halfDayFrom: d.halfDayFrom, halfDayTo: d.halfDayTo, daysCounted: String(r.counted), reason: d.reason }).returning();
+  const [row] = await insertReturning(LR, { companyId: req.user!.cid, employeeId: r.employeeId, leaveTypeId: d.leaveTypeId, fromDate: d.from, toDate: d.to, halfDayFrom: d.halfDayFrom, halfDayTo: d.halfDayTo, daysCounted: String(r.counted), reason: d.reason });
   await audit(req, 'leave_applied', 'leave_request', row.id, undefined, { ...d, days: r.counted });
   if (r.emp.managerId) await notifyUsersOfEmployees(req.user!.cid, [r.emp.managerId], `${r.emp.firstName} applied for ${r.type.name}`, `${d.from} → ${d.to} · ${r.counted} day(s)`, '/approvals');
   res.status(201).json(row);
@@ -133,7 +133,7 @@ leaveRouter.get('/leave/requests', h(async (req, res) => {
   if (req.query.status) where.push(eq(LR.status, String(req.query.status) as any));
   res.json(await db.select({
     id: LR.id, employeeId: LR.employeeId, from: LR.fromDate, to: LR.toDate, days: LR.daysCounted, status: LR.status, reason: LR.reason, decisionNote: LR.decisionNote,
-    halfDayFrom: LR.halfDayFrom, halfDayTo: LR.halfDayTo, createdAt: LR.createdAt, type: LT.name, typeCode: LT.code, name: sql<string>`${E.firstName} || ' ' || ${E.lastName}`, code: E.code,
+    halfDayFrom: LR.halfDayFrom, halfDayTo: LR.halfDayTo, createdAt: LR.createdAt, type: LT.name, typeCode: LT.code, name: sql<string>`concat(${E.firstName}, ' ', ${E.lastName})`, code: E.code,
   }).from(LR).innerJoin(LT, eq(LT.id, LR.leaveTypeId)).innerJoin(E, eq(E.id, LR.employeeId)).where(and(...where)).orderBy(desc(LR.createdAt)).limit(200));
 }));
 
@@ -151,7 +151,7 @@ leaveRouter.put('/leave/requests/:id/decision', h(async (req, res) => {
   const access = await employeeAccess(req, r.employeeId);
   if (access === 'self' || (access === 'admin' && !hasRole(req.user, 'COMPANY_ADMIN'))) throw forbidden(); // Payroll Manager: read only
   await db.transaction(async (tx) => {
-    const [u] = await tx.update(LR).set({ status: approve ? 'APPROVED' : 'REJECTED', approverId: req.user!.sub, decisionNote: note, decidedAt: new Date() }).where(and(eq(LR.id, r.id), eq(LR.status, 'PENDING'))).returning({ id: LR.id });
+    const [u] = await updateReturning(LR, { status: approve ? 'APPROVED' : 'REJECTED', approverId: req.user!.sub, decisionNote: note, decidedAt: new Date() }, and(eq(LR.id, r.id), eq(LR.status, 'PENDING')), tx);
     if (!u) throw new ApiError(409, 'already_decided', 'This request was already decided');
     if (approve) await tx.insert(LL).values({ companyId: r.companyId, employeeId: r.employeeId, leaveTypeId: r.leaveTypeId, date: r.fromDate, kind: 'debit', days: r.daysCounted, refType: 'leave_request', refId: r.id, createdBy: req.user!.sub });
   });

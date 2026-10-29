@@ -12,14 +12,11 @@
     "typecheck": "tsc -p .",
     "db:generate": "drizzle-kit generate",
     "fresh": "tsx src/db/fresh.ts",
-    "export:sqlite": "tsx src/db/export-sqlite.ts",
-    "db:copy-to-postgres": "tsx src/db/copy-to-postgres.ts",
     "import:razorpay": "tsx src/db/import-razorpay.ts",
     "reset-password": "tsx src/db/reset-password.ts",
     "push-to-live": "tsx src/db/push-to-live.ts"
   },
   "dependencies": {
-    "@electric-sql/pglite": "^0.2.17",
     "@node-rs/argon2": "^2.0.2",
     "@payrollpro/engines": "*",
     "cookie-parser": "^1.4.7",
@@ -31,6 +28,7 @@
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.24.6",
     "otplib": "^12.0.1",
     "pg": "^8.13.1",
     "tsx": "^4.19.2",

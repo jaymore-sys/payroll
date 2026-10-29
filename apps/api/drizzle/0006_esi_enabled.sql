@@ -1,1 +1,0 @@
-ALTER TABLE "company" ADD COLUMN "esi_enabled" boolean DEFAULT true NOT NULL;

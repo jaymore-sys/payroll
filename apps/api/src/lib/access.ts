@@ -1,17 +1,17 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Request } from 'express';
-import { db, schema } from '../db';
+import { db, rawRows, schema } from '../db';
 import { hasRole } from './auth';
 import { forbidden, notFound } from './http';
 
 /** Direct and indirect reports of an employee (recursive). */
 export async function teamIds(companyId: string, managerEmpId: string): Promise<string[]> {
-  const r = await db.execute<{ id: string }>(sql`
+  const r = await rawRows<{ id: string }>(sql`
     WITH RECURSIVE t AS (
       SELECT id FROM employee WHERE company_id = ${companyId} AND manager_id = ${managerEmpId}
       UNION SELECT e.id FROM employee e JOIN t ON e.manager_id = t.id WHERE e.company_id = ${companyId}
     ) SELECT id FROM t`);
-  return r.rows.map((x) => x.id);
+  return r.map((x) => x.id);
 }
 
 export type Access = 'admin' | 'self' | 'manager';

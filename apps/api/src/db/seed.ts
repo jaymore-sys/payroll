@@ -5,13 +5,13 @@ import { eq } from 'drizzle-orm';
 import { hashPassword } from '../lib/auth';
 import { encrypt, encryptJson } from '../lib/crypto';
 import { createRevision, creditJoinerLeave } from '../routes/employees';
-import { closeDb, db, schema } from './index';
+import { closeDb, db, insertReturning, schema } from './index';
 
 /** Migrate, then seed rules and (if the database is empty) the demo company. Used by `npm run dev` on first start. */
 /** One company with one Company Admin login (no demo data). */
 export async function createCompany(name: string, email: string, password: string) {
   const { hashPassword } = await import('../lib/auth');
-  const [c] = await db.insert(schema.companies).values({ name, legalName: name }).returning();
+  const [c] = await insertReturning(schema.companies, { name, legalName: name });
   await db.insert(schema.users).values({ companyId: c.id, email: email.trim().toLowerCase(), passwordHash: await hashPassword(password), roles: ['COMPANY_ADMIN'] });
 }
 
@@ -26,23 +26,23 @@ export async function ensureSeeded(password: string) {
 export async function seedRules() {
   for (const r of STATUTORY_RULES) {
     await db.insert(schema.statutoryRules).values({ ruleKey: r.id, ruleType: r.ruleType, state: r.state, effectiveFrom: r.effectiveFrom, effectiveTo: r.effectiveTo, params: r.params, sourceNote: r.sourceNote })
-      .onConflictDoUpdate({ target: schema.statutoryRules.ruleKey, set: { effectiveFrom: r.effectiveFrom, effectiveTo: r.effectiveTo, params: r.params, sourceNote: r.sourceNote } }); // law changes reach existing databases
+      .onDuplicateKeyUpdate({ set: { effectiveFrom: r.effectiveFrom, effectiveTo: r.effectiveTo, params: r.params, sourceNote: r.sourceNote } }); // law changes reach existing databases
   }
-  for (const t of TAX_RULES) await db.insert(schema.taxRules).values({ taxYear: t.taxYear, regime: t.regime, ageBand: t.ageBand, data: t }).onConflictDoNothing();
+  for (const t of TAX_RULES) await db.insert(schema.taxRules).values({ taxYear: t.taxYear, regime: t.regime, ageBand: t.ageBand, data: t }).onDuplicateKeyUpdate({ set: { data: t } });
 }
 
 export async function seedCompany(name: string, emailDomain: string, password: string, size = 24) {
   if (size < 12) throw new Error('seedCompany needs at least 12 employees');
-  const [c] = await db.insert(schema.companies).values({ name, legalName: `${name} Private Limited`, pan: 'AABCV1234F', tan: 'MUMV12345A', address: 'Andheri East, Mumbai 400069', payDay: 1, cutoffDay: 25 }).returning();
+  const [c] = await insertReturning(schema.companies, { name, legalName: `${name} Private Limited`, pan: 'AABCV1234F', tan: 'MUMV12345A', address: 'Andheri East, Mumbai 400069', payDay: 1, cutoffDay: 25 });
   const cid = c.id;
-  const [ent] = await db.insert(schema.entities).values({ companyId: cid, name: `${name} Pvt Ltd`, pan: 'AABCV1234F', tan: 'MUMV12345A', pfCode: 'MHBAN0012345000', esiCode: '31000123450000999' }).returning();
-  const brs = await db.insert(schema.branches).values([
+  const [ent] = await insertReturning(schema.entities, { companyId: cid, name: `${name} Pvt Ltd`, pan: 'AABCV1234F', tan: 'MUMV12345A', pfCode: 'MHBAN0012345000', esiCode: '31000123450000999' });
+  const brs = await insertReturning(schema.branches, [
     { companyId: cid, entityId: ent.id, name: 'Mumbai HQ', state: 'MH', city: 'Mumbai', metro: true },
     { companyId: cid, entityId: ent.id, name: 'Pune Plant', state: 'MH', city: 'Pune', metro: false },
     { companyId: cid, entityId: ent.id, name: 'Bengaluru', state: 'KA', city: 'Bengaluru', metro: false },
-  ]).returning();
-  const deps = await db.insert(schema.departments).values(['Engineering', 'Sales', 'Finance', 'Human Resources', 'Operations', 'Marketing'].map((n) => ({ companyId: cid, name: n }))).returning();
-  const des = await db.insert(schema.designations).values(['Founder & CEO', 'Engineering Manager', 'Senior Developer', 'Developer', 'Sales Executive', 'Accountant', 'HR Executive', 'Operations Associate', 'Marketing Lead'].map((n) => ({ companyId: cid, name: n }))).returning();
+  ]);
+  const deps = await insertReturning(schema.departments, ['Engineering', 'Sales', 'Finance', 'Human Resources', 'Operations', 'Marketing'].map((n) => ({ companyId: cid, name: n })));
+  const des = await insertReturning(schema.designations, ['Founder & CEO', 'Engineering Manager', 'Senior Developer', 'Developer', 'Sales Executive', 'Accountant', 'HR Executive', 'Operations Associate', 'Marketing Lead'].map((n) => ({ companyId: cid, name: n })));
   await db.insert(schema.holidays).values([
     ['2026-01-26', 'Republic Day'], ['2026-03-04', 'Holi'], ['2026-05-01', 'Maharashtra Day'], ['2026-08-15', 'Independence Day'], ['2026-09-14', 'Ganesh Chaturthi'],
     ['2026-10-02', 'Gandhi Jayanti'], ['2026-10-20', 'Dussehra'], ['2026-11-09', 'Diwali (Laxmi Puja)'], ['2026-11-10', 'Diwali (Balipratipada)'], ['2026-12-25', 'Christmas'], ['2027-01-26', 'Republic Day'],
@@ -73,7 +73,7 @@ export async function seedCompany(name: string, emailDomain: string, password: s
     const [first, last, g, d, ds, lakh] = people[i];
     const doj = new Date(Date.UTC(now.getUTCFullYear() - 2, now.getUTCMonth(), 1) + i * 29 * 864e5).toISOString().slice(0, 10);
     const pan = `ABCP${String.fromCharCode(65 + (i % 26))}${String(1000 + i * 37).slice(-4)}${String.fromCharCode(70 + (i % 10))}`;
-    const [e] = await db.insert(schema.employees).values({
+    const [e] = await insertReturning(schema.employees, {
       companyId: cid, code: `EMP${String(i + 1).padStart(4, '0')}`, firstName: first, lastName: last, gender: g,
       dob: `${1985 + (i % 15)}-0${1 + (i % 9)}-1${i % 9}`, workEmail: `${first.toLowerCase()}.${last.toLowerCase()}@${emailDomain}`, mobile: `98200${String(10000 + i * 311).slice(-5)}`,
       branchId: brs[i % 5 === 4 ? 2 : d === 4 ? 1 : 0].id, departmentId: deps[d].id, designationId: des[ds].id,
@@ -81,7 +81,7 @@ export async function seedCompany(name: string, emailDomain: string, password: s
       panEnc: encrypt(pan), panLast4: pan.slice(-4), bankEnc: encryptJson({ holder: `${first} ${last}`, account: `5010${String(1234567 + i * 7919)}`, ifsc: 'HDFC0001234', bankName: 'HDFC Bank' }), bankLast4: String(1234567 + i * 7919).slice(-4),
       aadhaarLast4: String(4000 + i * 13).slice(-4), uan: `1010${String(12345678 + i)}`, taxRegime: i % 4 === 0 ? 'old' : 'new',
       status: i === 23 ? 'NOTICE' : 'ACTIVE', lastWorkingDay: i === 23 ? new Date(Date.now() + 20 * 864e5).toISOString().slice(0, 10) : null,
-    }).returning();
+    });
     ids.push(e.id);
     await creditJoinerLeave(cid, e.id, `${now.getUTCFullYear()}-01-01`, g);
     await createRevision(fakeReq, e.id, { annualCtc: lakh * 100000 }, 0, doj);

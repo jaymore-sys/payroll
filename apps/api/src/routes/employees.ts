@@ -1,8 +1,8 @@
 import { splitCtc, upfrontProration } from '@payrollpro/engines';
-import { aliasedTable, and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { aliasedTable, and, asc, desc, eq, like, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { Router } from 'express';
 import { z } from 'zod';
-import { db, schema } from '../db';
+import { db, insertReturning, schema, updateReturning } from '../db';
 import { audit } from '../lib/audit';
 import { employeeAccess, notifyUsersOfEmployees, teamIds, type Access } from '../lib/access';
 import { canSeePay, hashPassword, hasRole, requireRole } from '../lib/auth';
@@ -56,7 +56,7 @@ const baseSelect = {
   workEmail: E.workEmail, mobile: E.mobile, doj: E.doj, status: E.status, employmentType: E.employmentType,
   branchId: E.branchId, departmentId: E.departmentId, designationId: E.designationId, managerId: E.managerId,
   department: schema.departments.name, designation: schema.designations.name, branch: schema.branches.name, state: schema.branches.state,
-  managerName: sql<string | null>`${Mgr.firstName} || ' ' || ${Mgr.lastName}`,
+  managerName: sql<string | null>`concat(${Mgr.firstName}, ' ', ${Mgr.lastName})`,
 };
 const joined = () => db.select({ ...baseSelect, row: E }).from(E)
   .leftJoin(schema.departments, eq(schema.departments.id, E.departmentId))
@@ -97,11 +97,11 @@ employeesRouter.get('/employees', h(async (req, res) => {
     if (!ids.length) return res.json({ items: [], total: 0, page: p, limit });
     where.push(inArray(E.id, ids));
   }
-  if (q.q) { const t = `%${q.q.slice(0, 50)}%`; where.push(or(ilike(E.firstName, t), ilike(E.lastName, t), ilike(E.code, t), ilike(E.workEmail, t))!); }
+  if (q.q) { const t = `%${q.q.slice(0, 50)}%`; where.push(or(like(E.firstName, t), like(E.lastName, t), like(E.code, t), like(E.workEmail, t))!); }
   if (q.status) where.push(eq(E.status, q.status as any));
   if (q.departmentId) where.push(eq(E.departmentId, q.departmentId));
   const rows = await joined().where(and(...where)).orderBy(q.sort === 'name' ? asc(E.firstName) : desc(E.createdAt)).limit(limit).offset(offset);
-  const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(E).where(and(...where));
+  const [{ count }] = await db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(E).where(and(...where));
   res.json({ items: rows.map((r) => view(r, admin)), total: count, page: p, limit });
 }));
 
@@ -124,9 +124,8 @@ employeesRouter.get('/employees/:id/sensitive', h(async (req, res) => {
 async function nextCode(cid: string) {
   // Skip codes already taken (e.g. employees imported with their RazorpayX IDs).
   for (;;) {
-    const [c] = await db.update(schema.companies).set({ nextEmployeeSeq: sql`${schema.companies.nextEmployeeSeq} + 1` })
-      .where(eq(schema.companies.id, cid)).returning({ seq: schema.companies.nextEmployeeSeq, prefix: schema.companies.employeeCodePrefix });
-    const code = `${c.prefix}${String(c.seq - 1).padStart(4, '0')}`;
+    const [c] = await updateReturning(schema.companies, { nextEmployeeSeq: sql`${schema.companies.nextEmployeeSeq} + 1` }, eq(schema.companies.id, cid));
+    const code = `${c.employeeCodePrefix}${String(c.nextEmployeeSeq - 1).padStart(4, '0')}`;
     const [taken] = await db.select({ id: E.id }).from(E).where(and(eq(E.companyId, cid), eq(E.code, code)));
     if (!taken) return code;
   }
@@ -167,13 +166,13 @@ export async function createRevision(req: any, empId: string, pay: { annualCtc?:
     const [prev] = await tx.select().from(S).where(and(eq(S.companyId, cid), eq(S.employeeId, empId), isNull(S.effectiveTo))).orderBy(desc(S.effectiveFrom)).limit(1);
     if (prev && prev.effectiveFrom >= effectiveFrom) throw new ApiError(409, 'overlap', 'A revision on or after this date already exists');
     if (prev) await tx.update(S).set({ effectiveTo: dayBefore }).where(eq(S.id, prev.id));
-    const [row] = await tx.insert(S).values({
+    const [row] = await insertReturning(S, {
       companyId: cid, employeeId: empId, annualCtc: String(annualCtc), annualVariable: String(annualVariable), monthlyGross: String(preview.monthlyGross),
       employerCost: String(preview.employer.monthlyTotal), deemedWages: String(preview.deemedWages), pfCapMode: company.pfCapMode, effectiveFrom, breakup: preview, createdBy: req.user.sub,
-    }).returning();
+    }, tx);
     return { row, prev };
   }).then(async ({ row, prev }) => {
-    // Audit after commit: the embedded database is single-connection, so writing outside the tx inside it would deadlock.
+    // Audit after commit, outside the transaction.
     await audit(req, 'salary_revision', 'employee', empId, prev ? { annualCtc: prev.annualCtc, effectiveFrom: prev.effectiveFrom } : undefined, { annualCtc, effectiveFrom });
     await needsRecalc(cid);
     return row;
@@ -186,7 +185,7 @@ employeesRouter.post('/employees', requireRole('COMPANY_ADMIN'), h(async (req, r
   await assertRefs(cid, d);
   const code = d.code ?? (await nextCode(cid));
   const { pan, bank, aadhaar, createLogin, annualCtc, monthlyGross, components, code: _c, ...rest } = d;
-  const [row] = await db.insert(E).values({ ...rest, code, companyId: cid, createdBy: req.user!.sub, ...sensitiveColumns({ pan, bank, aadhaar }) } as typeof E.$inferInsert).returning();
+  const [row] = await insertReturning(E, { ...rest, code, companyId: cid, createdBy: req.user!.sub, ...sensitiveColumns({ pan, bank, aadhaar }) } as typeof E.$inferInsert);
   await creditJoinerLeave(cid, row.id, row.doj, row.gender, req.user!.sub);
   let tempPassword: string | undefined;
   if (createLogin) {
@@ -208,7 +207,7 @@ employeesRouter.put('/employees/:id', requireRole('COMPANY_ADMIN', 'PAYROLL_MANA
   const [before] = await db.select().from(E).where(and(eq(E.companyId, cid), eq(E.id, req.params.id)));
   if (!before) throw notFound('Employee');
   const { pan, bank, aadhaar, ...rest } = d;
-  const [after] = await db.update(E).set({ ...rest, ...sensitiveColumns({ pan, bank, aadhaar }) } as any).where(eq(E.id, before.id)).returning();
+  const [after] = await updateReturning(E, { ...rest, ...sensitiveColumns({ pan, bank, aadhaar }) } as any, eq(E.id, before.id));
   // Joining date corrected: the first salary starts on the new date, otherwise the employee drops out of payroll for those months.
   if (d.doj && d.doj !== before.doj) {
     const [first] = await db.select().from(S).where(eq(S.employeeId, before.id)).orderBy(asc(S.effectiveFrom)).limit(1);
@@ -223,7 +222,7 @@ employeesRouter.put('/employees/:id', requireRole('COMPANY_ADMIN', 'PAYROLL_MANA
 employeesRouter.post('/employees/:id/exit', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const d = parse(z.object({ lastWorkingDay: z.string().date(), reason: z.string().max(300) }), req.body);
   const status = d.lastWorkingDay <= new Date().toISOString().slice(0, 10) ? 'EXITED' : 'NOTICE';
-  const [row] = await db.update(E).set({ lastWorkingDay: d.lastWorkingDay, exitReason: d.reason, status }).where(and(eq(E.companyId, req.user!.cid), eq(E.id, req.params.id))).returning({ id: E.id });
+  const [row] = await updateReturning(E, { lastWorkingDay: d.lastWorkingDay, exitReason: d.reason, status }, and(eq(E.companyId, req.user!.cid), eq(E.id, req.params.id)));
   if (!row) throw notFound('Employee');
   await needsRecalc(req.user!.cid);
   await audit(req, 'exit', 'employee', row.id, undefined, { ...d, status });
@@ -281,11 +280,11 @@ employeesRouter.post('/employees/import', requireRole('COMPANY_ADMIN'), h(async 
   for (const { data: d } of valid) {
     const code = d.code ?? (await nextCode(cid));
     const [mgr] = d.managerCode ? await db.select({ id: E.id }).from(E).where(and(eq(E.companyId, cid), eq(E.code, d.managerCode))) : [];
-    const [row] = await db.insert(E).values({
+    const [row] = await insertReturning(E, {
       companyId: cid, code, firstName: d.firstName, lastName: d.lastName, workEmail: d.workEmail, gender: d.gender, doj: d.doj, mobile: d.mobile,
       departmentId: byName(deps, d.department), designationId: byName(desigs, d.designation), branchId: byName(brs, d.branch), managerId: mgr?.id, createdBy: req.user!.sub,
       ...sensitiveColumns({ pan: d.pan, bank: d.accountNumber ? { holder: `${d.firstName} ${d.lastName}`, account: d.accountNumber, ifsc: d.ifsc! } : undefined }),
-    }).returning();
+    });
     await creditJoinerLeave(cid, row.id, row.doj, row.gender, req.user!.sub);
     if (d.monthlyGross || d.annualCtc) await createRevision(req, row.id, { monthlyGross: d.monthlyGross, annualCtc: d.annualCtc }, 0, row.doj);
     created.push(row.id);
@@ -329,7 +328,7 @@ const crSchema = z.discriminatedUnion('field', [
 employeesRouter.post('/change-requests', h(async (req, res) => {
   if (!req.user!.eid) throw forbidden();
   const d = parse(crSchema, req.body);
-  const [row] = await db.insert(schema.changeRequests).values({ companyId: req.user!.cid, employeeId: req.user!.eid, field: d.field, valueEnc: encryptJson(d.value) }).returning({ id: schema.changeRequests.id });
+  const [row] = await insertReturning(schema.changeRequests, { companyId: req.user!.cid, employeeId: req.user!.eid, field: d.field, valueEnc: encryptJson(d.value) });
   await audit(req, 'change_request', 'employee', req.user!.eid, undefined, { field: d.field });
   res.status(201).json(row);
 }));
@@ -337,7 +336,7 @@ employeesRouter.get('/change-requests', h(async (req, res) => {
   const CR = schema.changeRequests;
   const admin = hasRole(req.user, 'COMPANY_ADMIN');
   const where = admin ? eq(CR.companyId, req.user!.cid) : and(eq(CR.companyId, req.user!.cid), eq(CR.employeeId, req.user!.eid ?? '00000000-0000-0000-0000-000000000000'));
-  const rows = await db.select({ id: CR.id, field: CR.field, status: CR.status, createdAt: CR.createdAt, employeeId: CR.employeeId, valueEnc: CR.valueEnc, name: sql<string>`${E.firstName} || ' ' || ${E.lastName}`, code: E.code })
+  const rows = await db.select({ id: CR.id, field: CR.field, status: CR.status, createdAt: CR.createdAt, employeeId: CR.employeeId, valueEnc: CR.valueEnc, name: sql<string>`concat(${E.firstName}, ' ', ${E.lastName})`, code: E.code })
     .from(CR).innerJoin(E, eq(E.id, CR.employeeId)).where(where).orderBy(desc(CR.createdAt)).limit(100);
   // Requested values are shown masked; only the approver sees them in the decision step.
   res.json(rows.map(({ valueEnc, ...r }) => {

@@ -4,7 +4,7 @@ import rateLimit from 'express-rate-limit';
 import { authenticator } from 'otplib';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { db, schema } from '../db';
+import { db, schema, updateReturning } from '../db';
 import { isProd } from '../env';
 import { audit } from '../lib/audit';
 import { ACCESS_TTL_SEC, hashPassword, requireAuth, signAccess, signChallenge, verifyChallenge, verifyPassword } from '../lib/auth';
@@ -137,7 +137,7 @@ authRouter.post('/change-password', requireAuth, h(async (req, res) => {
 
 authRouter.post('/2fa/setup', requireAuth, h(async (req, res) => {
   const secret = authenticator.generateSecret();
-  const [u] = await db.update(U).set({ totpSecretEnc: encrypt(secret), totpEnabled: false }).where(eq(U.id, req.user!.sub)).returning({ email: U.email });
+  const [u] = await updateReturning(U, { totpSecretEnc: encrypt(secret), totpEnabled: false }, eq(U.id, req.user!.sub));
   res.json({ secret, otpauthUrl: authenticator.keyuri(u.email, 'PayrollPro', secret) });
 }));
 

@@ -98,7 +98,7 @@ async function save(req: Request, month: string, items: z.infer<typeof item>[]) 
     for (const it of items) {
       const v = { workingDays: String(it.workingDays ?? rows.get(it.employeeId)!.workingDays), presentDays: String(it.presentDays), paidLeaveDays: String(it.paidLeaveDays), lopDays: String(it.lopDays), overtimeHours: String(it.overtimeHours), note: it.note ?? null, enteredBy: req.user!.sub };
       await tx.insert(A).values({ companyId: req.user!.cid, employeeId: it.employeeId, month, ...v })
-        .onConflictDoUpdate({ target: [A.companyId, A.employeeId, A.month], set: v });
+        .onDuplicateKeyUpdate({ set: v });
     }
   });
   await needsRecalc(req.user!.cid, month);

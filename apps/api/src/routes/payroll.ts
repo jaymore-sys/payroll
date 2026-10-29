@@ -2,7 +2,7 @@ import { computePayslip, daysInMonth, fyMonth, taxYearOf, type Payslip } from '@
 import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { db, schema } from '../db';
+import { db, insertReturning, schema, updateReturning } from '../db';
 import { audit } from '../lib/audit';
 import { hasRole, requireRole } from '../lib/auth';
 import { decryptJson } from '../lib/crypto';
@@ -44,7 +44,7 @@ async function eligible(cid: string, month: string) {
 async function unpaidLeaveDays(cid: string, month: string) {
   const { first, last } = monthBounds(month);
   // ponytail: counts a request in the month it starts; requests spanning two months need attendance close (phase 3) to split.
-  const rows = await db.select({ emp: schema.leaveRequests.employeeId, days: sql<number>`sum(${schema.leaveRequests.daysCounted})::float` })
+  const rows = await db.select({ emp: schema.leaveRequests.employeeId, days: sql<number>`sum(${schema.leaveRequests.daysCounted})`.mapWith(Number) })
     .from(schema.leaveRequests).innerJoin(schema.leaveTypes, eq(schema.leaveTypes.id, schema.leaveRequests.leaveTypeId))
     .where(and(eq(schema.leaveRequests.companyId, cid), eq(schema.leaveRequests.status, 'APPROVED'), eq(schema.leaveTypes.paid, false), gte(schema.leaveRequests.fromDate, first), lte(schema.leaveRequests.fromDate, last)))
     .groupBy(schema.leaveRequests.employeeId);
@@ -80,7 +80,7 @@ payrollRouter.post('/payroll-runs', requireRole(...ADMIN), h(async (req, res) =>
   const { month } = parse(z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Use YYYY-MM') }), req.body);
   const next = new Date(); next.setUTCMonth(next.getUTCMonth() + 1);
   if (month > next.toISOString().slice(0, 7)) throw new ApiError(422, 'future_month', 'You can only run payroll up to next month');
-  const [run] = await db.insert(R).values({ companyId: req.user!.cid, month, createdBy: req.user!.sub }).returning();
+  const [run] = await insertReturning(R, { companyId: req.user!.cid, month, createdBy: req.user!.sub });
   const added = await syncInputs(req.user!.cid, run.id, month);
   await audit(req, 'create', 'payroll_run', run.id, undefined, { month, employees: added });
   res.status(201).json(run);
@@ -99,8 +99,8 @@ payrollRouter.get('/payroll-runs/:id', requireRole(...ADMIN), h(async (req, res)
   const run = await loadRun(req);
   const cid = req.user!.cid;
   const rows = await db.select({
-    input: I, employeeId: E.id, code: E.code, name: sql<string>`${E.firstName} || ' ' || ${E.lastName}`, department: schema.departments.name,
-    hasPan: sql<boolean>`${E.panEnc} is not null`, hasBank: sql<boolean>`${E.bankEnc} is not null`, status: E.status, doj: E.doj, lastWorkingDay: E.lastWorkingDay,
+    input: I, employeeId: E.id, code: E.code, name: sql<string>`concat(${E.firstName}, ' ', ${E.lastName})`, department: schema.departments.name,
+    hasPan: sql<boolean>`${E.panEnc} is not null`.mapWith(Boolean), hasBank: sql<boolean>`${E.bankEnc} is not null`.mapWith(Boolean), status: E.status, doj: E.doj, lastWorkingDay: E.lastWorkingDay,
     slip: { id: P.id, gross: P.gross, net: P.net, tds: P.tds, totalDeductions: P.totalDeductions, employerCost: P.employerCost, payableDays: P.payableDays, detail: P.detail },
   }).from(I).innerJoin(E, eq(E.id, I.employeeId)).leftJoin(schema.departments, eq(schema.departments.id, E.departmentId))
     .leftJoin(P, and(eq(P.runId, I.runId), eq(P.employeeId, I.employeeId)))
@@ -174,7 +174,7 @@ payrollRouter.post('/payroll-runs/:id/calculate', requireRole(...ADMIN), h(async
   const branches = new Map((await db.select().from(schema.branches).where(eq(schema.branches.companyId, cid))).map((b) => [b.id, b]));
 
   // Year-to-date from finalised payslips earlier in this financial year (spec §7.3 step 1).
-  const ytdRows = await db.select({ emp: P.employeeId, taxable: sql<number>`sum(${P.taxableGross})::float`, tds: sql<number>`sum(${P.tds})::float`, pf: sql<number>`sum(${P.pf})::float`, pt: sql<number>`sum(${P.pt})::float`, months: sql<number>`count(*)::int` })
+  const ytdRows = await db.select({ emp: P.employeeId, taxable: sql<number>`sum(${P.taxableGross})`.mapWith(Number), tds: sql<number>`sum(${P.tds})`.mapWith(Number), pf: sql<number>`sum(${P.pf})`.mapWith(Number), pt: sql<number>`sum(${P.pt})`.mapWith(Number), months: sql<number>`count(*)`.mapWith(Number) })
     .from(P).innerJoin(R, eq(R.id, P.runId))
     .where(and(eq(P.companyId, cid), eq(R.status, 'FINALISED'), gte(P.month, fyStart(run.month)), lt(P.month, run.month))).groupBy(P.employeeId);
   const ytd = new Map(ytdRows.map((r) => [r.emp, r]));
@@ -223,14 +223,14 @@ payrollRouter.post('/payroll-runs/:id/calculate', requireRole(...ADMIN), h(async
 /* ---------- approve / reopen ---------- */
 payrollRouter.post('/payroll-runs/:id/approve', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const run = await loadRun(req);
-  const [u] = await db.update(R).set({ status: 'FINALISED', finalisedAt: new Date(), finalisedBy: req.user!.sub }).where(and(eq(R.id, run.id), eq(R.status, 'CALCULATED'))).returning({ id: R.id });
+  const [u] = await updateReturning(R, { status: 'FINALISED', finalisedAt: new Date(), finalisedBy: req.user!.sub }, and(eq(R.id, run.id), eq(R.status, 'CALCULATED')));
   if (!u) throw new ApiError(409, 'not_calculated', run.status === 'FINALISED' ? 'Already approved' : 'Calculate salaries before approving');
   await audit(req, 'approve', 'payroll_run', run.id, { status: run.status }, { status: 'FINALISED', totals: run.totals });
   res.json({ ok: true });
 }));
 payrollRouter.post('/payroll-runs/:id/reopen', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const run = await loadRun(req);
-  const [u] = await db.update(R).set({ status: 'CALCULATED', finalisedAt: null, finalisedBy: null }).where(and(eq(R.id, run.id), eq(R.status, 'FINALISED'))).returning({ id: R.id });
+  const [u] = await updateReturning(R, { status: 'CALCULATED', finalisedAt: null, finalisedBy: null }, and(eq(R.id, run.id), eq(R.status, 'FINALISED')));
   if (!u) throw new ApiError(409, 'not_approved', 'This run is not approved');
   await audit(req, 'reopen', 'payroll_run', run.id, { status: 'FINALISED' }, { status: 'CALCULATED' });
   res.json({ ok: true });
