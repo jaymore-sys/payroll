@@ -210,7 +210,11 @@ attendanceRouter.post('/attendance/import', h(async (req, res) => {
     if (part.length) return part.length === 1 ? part[0].e.id : 'ambiguous';
     // Surname spelt differently in the sheet ("Kikawat" / "Kikavat"): fall back to a first name only one employee has.
     const first = emps.filter((x) => nm(x.e.firstName) === n.split(' ')[0]);
-    return first.length === 1 ? first[0].e.id : first.length > 1 ? 'ambiguous' : undefined;
+    if (first.length) return first.length === 1 ? first[0].e.id : 'ambiguous';
+    // Short name in the sheet ("Essa Ansari" for Mohammad Essa Mohammad Ejaz Ansari): every word appears in the full name.
+    const words = n.split(' ');
+    const all = emps.filter((x) => { const full = nm(`${x.e.firstName} ${x.e.middleName ?? ''} ${x.e.lastName}`).split(' '); return words.every((w) => full.includes(w)); });
+    return all.length === 1 ? all[0].e.id : all.length > 1 ? 'ambiguous' : undefined;
   };
   const unmatched: string[] = [];
   const has = (v: unknown) => v !== '' && v !== undefined && v !== null;

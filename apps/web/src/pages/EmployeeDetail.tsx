@@ -105,12 +105,11 @@ export default function EmployeeDetail() {
     <Stagger>
       <Link to="/employees" className="mb-4 inline-flex items-center gap-1.5 text-sm font-semibold text-muted hover:text-ink"><ArrowLeft className="h-4 w-4" />People</Link>
       <Item className="card relative mb-5 overflow-hidden p-6">
-        <div className="gradient-brand absolute inset-x-0 top-0 h-20 opacity-90" />
+        <div className="gradient-brand absolute inset-x-0 top-0 h-14 opacity-90" />
         <div className="relative flex flex-col gap-4 pt-8 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex items-end gap-4">
             <motion.div initial={{ scale: 0.5, rotate: -10 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: 'spring' }} className="rounded-full ring-4 ring-surface"><Avatar name={name} size="lg" /></motion.div>
-            <div className="pb-1"><h1 className="text-xl font-extrabold sm:text-2xl">{name}</h1><p className="text-sm text-muted">{e.designation ?? '—'} · {e.code}</p></div>
-            <Badge tone={statusTone[e.status]} className="mb-2" dot={e.status === 'NOTICE'}>{e.status.toLowerCase()}</Badge>
+            <div className="pb-1"><div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-extrabold sm:text-2xl">{name}</h1><Badge tone={statusTone[e.status]} dot={e.status === 'NOTICE'}>{e.status.toLowerCase()}</Badge></div><p className="text-sm text-muted">{e.designation ?? '—'} · {e.code}</p></div>
           </div>
           <div className="flex flex-wrap gap-2">
             {(admin || pm) && <Button size="sm" variant="secondary" icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setModal('edit')}>Edit</Button>}
