@@ -84,7 +84,7 @@ const REPORTS: Record<string, { title: string; group: string; desc: string; peri
     },
   },
   'consolidated-ytd': {
-    title: 'Consolidated Salary Register YTD', group: 'Payroll', period: 'fy', desc: 'Each employee’s approved pay added up for the financial year so far',
+    title: 'Salary Register YTD', group: 'Payroll', period: 'fy', desc: 'Each employee’s approved pay added up for the financial year so far',
     async build({ cid, month }) {
       const fy = fyMonths(month);
       const by = new Map<string, Record<string, any>>();

@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Banknote, Bell, Briefcase, Building2, Calculator, CalendarCheck2, CheckCheck, ChevronsLeft, ClipboardCheck, FileClock, FileSpreadsheet, LayoutDashboard, LogOut, Menu, Moon, ReceiptText, ShieldCheck, Sun, UserCircle2, Users, Wallet, X,
+  Banknote, Bell, Briefcase, ChevronDown, Building2, Calculator, CalendarCheck2, CheckCheck, ChevronsLeft, ClipboardCheck, FileClock, FileSpreadsheet, LayoutDashboard, LogOut, Menu, Moon, ReceiptText, ShieldCheck, Sun, UserCircle2, Users, Wallet, X,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
@@ -37,8 +37,35 @@ function useCollapsed() {
   return [c, set] as const;
 }
 
+/** Reports opens as a sub-menu in the sidebar: one link per report, grouped like RazorpayX. */
+function ReportsMenu({ onNavigate }: { onNavigate?: () => void }) {
+  const loc = useLocation();
+  const { data: defs = [] } = useQuery<{ key: string; title: string; group: string }[]>({ queryKey: ['reports'], queryFn: () => get('/reports'), staleTime: Infinity });
+  const groups = [...new Set(defs.map((d) => d.group))];
+  const current = loc.pathname.split('/')[2] ?? 'salary-register';
+  return (
+    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+      <div className="ml-5 mt-1 space-y-2 border-l border-line pb-2 pl-3">
+        {groups.map((g) => (
+          <div key={g}>
+            <p className="px-2 pb-0.5 pt-1 text-[10px] font-bold uppercase tracking-wide text-muted/80">{g}</p>
+            {defs.filter((d) => d.group === g).map((d) => (
+              <NavLink key={d.key} to={`/reports/${d.key}`} onClick={onNavigate}
+                className={clsx('block truncate rounded-lg px-2 py-1.5 text-[13px]', loc.pathname.startsWith('/reports') && current === d.key ? 'bg-brand-soft font-semibold text-brand-ink' : 'text-muted hover:bg-surface-2 hover:text-ink')}>{d.title}</NavLink>
+            ))}
+          </div>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
+
 function SideNav({ collapsed, onNavigate, animatePill = true }: { collapsed: boolean; onNavigate?: () => void; animatePill?: boolean }) {
   const { me, can } = useAuth();
+  const loc = useLocation();
+  const inReports = loc.pathname.startsWith('/reports');
+  const [reportsOpen, setReportsOpen] = useState(inReports);
+  useEffect(() => { if (inReports) setReportsOpen(true); }, [inReports]);
   const items = NAV.filter((n) => (!n.roles || can(...n.roles)) && (!n.needsEmployee || me?.employeeId));
   const section = (s: Nav['section'], title: string) => {
     const list = items.filter((i) => i.section === s);
@@ -49,6 +76,17 @@ function SideNav({ collapsed, onNavigate, animatePill = true }: { collapsed: boo
         <motion.ul initial="hidden" animate="show" variants={{ hidden: {}, show: { transition: { staggerChildren: 0.04 } } }} className="space-y-0.5">
           {list.map((n) => (
             <motion.li key={n.to} variants={{ hidden: { opacity: 0, x: -12 }, show: { opacity: 1, x: 0 } }}>
+              {n.to === '/reports' && !collapsed ? (
+                <>
+                  <button onClick={() => setReportsOpen(!reportsOpen)} aria-expanded={reportsOpen}
+                    className={clsx('group relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors', inReports ? 'text-brand-ink' : 'text-muted hover:text-ink')}>
+                    <span className="relative transition-transform duration-200 group-hover:scale-110">{n.icon}</span>
+                    <span className="relative flex-1 truncate text-left">{n.label}</span>
+                    <motion.span animate={{ rotate: reportsOpen ? 180 : 0 }}><ChevronDown className="h-4 w-4" /></motion.span>
+                  </button>
+                  <AnimatePresence initial={false}>{reportsOpen && <ReportsMenu key="rm" onNavigate={onNavigate} />}</AnimatePresence>
+                </>
+              ) : (
               <NavLink to={n.to} end={n.to === '/'} onClick={onNavigate} title={collapsed ? n.label : undefined}
                 className={({ isActive }) => clsx('group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors', isActive ? 'text-brand-ink' : 'text-muted hover:text-ink', collapsed && 'justify-center')}>
                 {({ isActive }) => (<>
@@ -60,7 +98,7 @@ function SideNav({ collapsed, onNavigate, animatePill = true }: { collapsed: boo
                   <span className="relative transition-transform duration-200 group-hover:scale-110">{n.icon}</span>
                   {!collapsed && <span className="relative truncate">{n.label}</span>}
                 </>)}
-              </NavLink>
+              </NavLink>)}
             </motion.li>
           ))}
         </motion.ul>

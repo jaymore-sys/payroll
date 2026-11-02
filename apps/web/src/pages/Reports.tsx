@@ -3,8 +3,9 @@ import clsx from 'clsx';
 import { motion } from 'framer-motion';
 import { FileSpreadsheet, FileText, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Button, Card, CardTitle, DataTable, EmptyState, Input, PageHeader, Skeleton, Switch } from '../components/ui';
+import { Button, Card, CardTitle, DataTable, EmptyState, Input, Skeleton, Switch } from '../components/ui';
 import { ApiError, download, get } from '../lib/api';
 import { inr } from '../lib/format';
 
@@ -12,10 +13,10 @@ type Def = { key: string; title: string; group: string; desc: string; period: 'm
 type Rep = { title: string; sub?: string; columns: { key: string; label: string; money?: boolean }[]; rows: Record<string, any>[] };
 const prevMonth = () => { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 7); };
 
-/** Reports, modelled on RazorpayX Payroll → Reports: pick one, choose the month, view it, download Excel or CSV. */
+/** One report (picked from the Reports sub-menu in the sidebar): choose the month, view it, download Excel or CSV. */
 export default function Reports() {
   const { data: defs } = useQuery<Def[]>({ queryKey: ['reports'], queryFn: () => get('/reports') });
-  const [key, setKey] = useState('salary-register');
+  const { key = 'salary-register' } = useParams();
   const [month, setMonth] = useState(prevMonth);
   const [skipped, setSkipped] = useState(false);
   const [q, setQ] = useState('');
@@ -23,7 +24,6 @@ export default function Reports() {
   const qs = `month=${month}${key === 'salary-register' && skipped ? '&showSkipped=1' : ''}`;
   const { data: rep, isLoading, error } = useQuery<Rep>({ queryKey: ['report', key, qs], queryFn: () => get(`/reports/${key}?${qs}`), enabled: !!def });
   const rows = useMemo(() => (rep?.rows ?? []).filter((r) => !q || Object.values(r).join(' ').toLowerCase().includes(q.toLowerCase())), [rep, q]);
-  const groups = useMemo(() => [...new Set((defs ?? []).map((d) => d.group))], [defs]);
 
   const csv = () => {
     if (!rep) return;
@@ -39,20 +39,9 @@ export default function Reports() {
 
   return (
     <>
-      <PageHeader title="Reports" sub="Salary, statutory, tax and people reports — view on screen or download as Excel / CSV" />
-      <div className="grid gap-5 lg:grid-cols-[260px_1fr]">
-        <Card hover={false} className="h-fit p-3">
-          {!defs ? <Skeleton className="h-96" /> : groups.map((g) => (
-            <div key={g} className="mb-3">
-              <p className="px-2 pb-1 text-[11px] font-bold uppercase tracking-wide text-muted">{g}</p>
-              {defs.filter((d) => d.group === g).map((d) => (
-                <button key={d.key} onClick={() => { setKey(d.key); setQ(''); }} className={clsx('block w-full rounded-lg px-2 py-1.5 text-left text-sm', d.key === key ? 'bg-brand-soft font-semibold text-brand' : 'hover:bg-surface-2')}>{d.title}</button>
-              ))}
-            </div>
-          ))}
-        </Card>
-        <Card hover={false} className="min-w-0 p-0">
+        <Card hover={false} className="min-w-0 p-0" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <div className="flex flex-col gap-3 border-b border-line p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-muted">Reports · {def?.group}</p>
             <CardTitle sub={def?.desc}>{rep?.title ?? def?.title ?? 'Report'}</CardTitle>
             <div className="flex flex-wrap items-center gap-2">
               {def && def.period !== 'none' && <Input type="month" value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} className="w-44" aria-label={def.period === 'fy' ? 'Any month of the financial year' : 'Month'} />}
@@ -71,7 +60,6 @@ export default function Reports() {
             {rep && rep.rows.length > 0 && <p className="px-2 pt-2 text-xs text-muted">{rows.length} of {rep.rows.length} rows</p>}
           </motion.div>
         </Card>
-      </div>
     </>
   );
 }

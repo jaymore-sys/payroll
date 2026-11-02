@@ -79,6 +79,7 @@ export default function App() {
                 <Route path="payroll/:id" element={<Guard roles={ADM}><Suspense fallback={<PageSkeleton />}><PayrollRun /></Suspense></Guard>} />
                 <Route path="consultants" element={<Guard roles={ADM}><Suspense fallback={<PageSkeleton />}><Consultants /></Suspense></Guard>} />
                 <Route path="reports" element={<Guard roles={ADM}><Suspense fallback={<PageSkeleton />}><Reports /></Suspense></Guard>} />
+                <Route path="reports/:key" element={<Guard roles={ADM}><Suspense fallback={<PageSkeleton />}><Reports /></Suspense></Guard>} />
                 <Route path="payslips" element={<Suspense fallback={<PageSkeleton />}><Payslips /></Suspense>} />
                 <Route path="attendance" element={<Guard roles={[...ADM, 'REPORTING_MANAGER']}><Suspense fallback={<PageSkeleton />}><Attendance /></Suspense></Guard>} />
                 <Route path="approvals" element={<Guard roles={['COMPANY_ADMIN']}><Suspense fallback={<PageSkeleton />}><Approvals /></Suspense></Guard>} />
