@@ -15,6 +15,8 @@ export interface StatEmployee {
   esiCoveredThisPeriod?: boolean;
   /** Company not registered under ESI (RazorpayX: ESIC "Company Disabled"): no ESI at all. */
   esiExempt?: boolean;
+  /** Professional tax not deducted for this employee (set on the employee). */
+  ptExempt?: boolean;
 }
 export interface MonthInputs {
   month: string;      // YYYY-MM
@@ -22,7 +24,6 @@ export interface MonthInputs {
   esiGross: number;   // ESI gross for the month
   grossMonthly: number; // for PT
   payableDays: number;
-  wages: number;      // Labour Code wages for gratuity provision
 }
 
 /** computeStatutory (spec §6.7): pure, every line carries the rule ID it used. */
@@ -66,7 +67,7 @@ export function computeStatutory(e: StatEmployee, m: MonthInputs, rules: Statuto
   /* PT — states without a row return zero */
   const ptR = ruleAsOf<PtParams>(rules, 'pt', asOf, e.state);
   let ptAmount = 0;
-  if (ptR) {
+  if (ptR && !e.ptExempt) {
     const g = D(m.grossMonthly);
     const slab = ptR.params.slabs.find((s) => (s.gender === 'any' || s.gender === e.gender) && g.gte(s.from) && (s.to === null || g.lte(s.to)));
     if (slab) ptAmount = monthNo === 2 && slab.febAmount ? slab.febAmount : slab.amount;
@@ -76,12 +77,10 @@ export function computeStatutory(e: StatEmployee, m: MonthInputs, rules: Statuto
   const lwfR = ruleAsOf<LwfParams>(rules, 'lwf', asOf, e.state);
   const lwfDue = !!lwfR && lwfR.params.months.includes(monthNo);
 
-  const grR = ruleAsOf<GratuityParams>(rules, 'gratuity', asOf);
   return {
     pf, esi,
     pt: { ruleId: ptR?.id ?? null, amount: ptAmount },
     lwf: { ruleId: lwfR?.id ?? null, employee: lwfDue ? lwfR!.params.employee : 0, employer: lwfDue ? lwfR!.params.employer : 0 },
-    gratuityProvision: { ruleId: grR?.id ?? null, amount: grR ? n(rupee(D(m.wages).times(grR.params.provisionRate))) : 0 },
     notes,
   };
 }

@@ -13,11 +13,23 @@ const Line = ({ l, v, i, tag, neg, compact }: { l: string; v: number; i: number;
 );
 
 /** CTC breakup view from the engine's splitCtc() output. */
-export default function Breakup({ p, compact }: { p: any; compact?: boolean }) {
+export default function Breakup({ p, compact, intern }: { p: any; compact?: boolean; intern?: boolean }) {
+  if (intern || p.intern) {
+    const stipend = Math.round(p.monthlyGross);
+    return (
+      <div className="grid gap-4 sm:grid-cols-2">
+        {[['Stipend / month', stipend], ['Net pay / month', stipend]].map(([l, v], i) => (
+          <motion.div key={l as string} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }} className="rounded-2xl bg-surface-2 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted">{l}</p>
+            <p className={`mt-1 text-xl font-extrabold ${i === 1 ? 'text-ok' : ''}`}>{inr(v as number)}</p>
+          </motion.div>))}
+      </div>
+    );
+  }
   const rows: [string, number, string?][] = [
     ...p.components.map((c: any) => [c.name, c.monthly, c.isWage ? 'wage' : undefined] as [string, number, string?]),
   ];
-  const employer: [string, number][] = [['Employer PF', p.employer.pf], ['Employer ESI', p.employer.esi], ['Gratuity provision', p.employer.gratuity]];
+  const employer: [string, number][] = [['Employer PF', p.employer.pf], ['Employer ESI', p.employer.esi]];
   const deductions: [string, number][] = [['Employee PF', p.employee.pf], ['Employee ESI', p.employee.esi], ['Professional tax', p.employee.pt], ['TDS (new regime, est.)', p.tds.new]];
   return (
     <div className="space-y-5">

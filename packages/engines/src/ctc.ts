@@ -27,13 +27,14 @@ export interface CtcInput {
   /** Give the monthly gross instead of CTC: the structure is split from it directly. */
   monthlyGross?: number;
   /**
-   * false (default, RazorpayX style): CTC = gross × 12 + variable; employer PF/ESI/gratuity are shown as employer cost on top.
+   * false (default, RazorpayX style): CTC = gross × 12 + variable; employer PF/ESI are shown as employer cost on top.
    * true: CTC includes employer costs, so the gross is solved from it (spec §5).
    */
   employerCostInCtc?: boolean;
   pfOptOut?: boolean;
   internationalWorker?: boolean;
   esiExempt?: boolean;
+  ptExempt?: boolean;
   annualVariable?: number;
   metro: boolean;
   pfCapMode: 'capped' | 'actual';
@@ -68,14 +69,13 @@ function build(gross: Decimal, i: CtcInput, tpl: ComponentDef[], rules: Statutor
   const effWages = wages.plus(i.labourCodeMode === false ? 0 : deemed);
   const month = i.asOf ?? new Date().toISOString().slice(0, 7);
   const stat = computeStatutory(
-    { gender: i.gender ?? 'M', state: i.state, age: i.age ?? 30, doj: i.doj ?? `${month}-01`, pfCapMode: i.pfCapMode, pfOptOut: i.pfOptOut, internationalWorker: i.internationalWorker, esiExempt: i.esiExempt },
-    { month, pfWage: n(effWages), esiGross: n(gross), grossMonthly: n(gross), payableDays: 30, wages: n(effWages) },
+    { gender: i.gender ?? 'M', state: i.state, age: i.age ?? 30, doj: i.doj ?? `${month}-01`, pfCapMode: i.pfCapMode, pfOptOut: i.pfOptOut, internationalWorker: i.internationalWorker, esiExempt: i.esiExempt, ptExempt: i.ptExempt },
+    { month, pfWage: n(effWages), esiGross: n(gross), grossMonthly: n(gross), payableDays: 30 },
     rules,
   );
   const erPf = D((stat.pf?.employerTotal as number) ?? 0);
   const erEsi = D((stat.esi?.employer as number) ?? 0);
-  const grat = D(stat.gratuityProvision.amount);
-  return { amt, wages, deemed, stat, employerCost: erPf.plus(erEsi).plus(grat), erPf, erEsi, grat };
+  return { amt, wages, deemed, stat, employerCost: erPf.plus(erEsi), erPf, erEsi };
 }
 
 /** CTC split (spec §5). By default CTC is gross × 12 + variable; with employerCostInCtc the gross is solved so gross + employer costs = monthly CTC. */
@@ -110,7 +110,7 @@ export function splitCtc(i: CtcInput, rules: StatutoryRule[] = STATUTORY_RULES, 
   if (balCode && r.amt[balCode].lt(0)) throw new Error(`Component ${balCode} is negative: fixed components exceed gross`);
 
   const warnings: string[] = [];
-  if (r.deemed.gt(0)) warnings.push(`50% wage rule: ₹${n(r.deemed)}/month added to wages for PF, ESI, gratuity and bonus`);
+  if (r.deemed.gt(0)) warnings.push(`50% wage rule: ₹${n(r.deemed)}/month added to wages for PF and ESI`);
 
   const empPf = D((r.stat.pf?.employee as number) ?? 0);
   const empEsi = D((r.stat.esi?.employee as number) ?? 0);
@@ -129,7 +129,7 @@ export function splitCtc(i: CtcInput, rules: StatutoryRule[] = STATUTORY_RULES, 
     components: tpl.map((c) => ({ code: c.code, name: c.name, monthly: n(r.amt[c.code] ?? 0), annual: n((r.amt[c.code] ?? D(0)).times(12)), isWage: c.isWage })),
     monthlyGross: n(gross),
     annualVariable: n(variable),
-    employer: { pf: n(r.erPf), esi: n(r.erEsi), gratuity: n(r.grat), monthlyTotal: n(r.employerCost) },
+    employer: { pf: n(r.erPf), esi: n(r.erEsi), monthlyTotal: n(r.employerCost) },
     employee: { pf: n(empPf), esi: n(empEsi), pt: n(pt) },
     wages: n(r.wages), deemedWages: n(r.deemed),
     tds: { new: n(tdsNew), old: n(tdsOld), recommended: tax.recommended },

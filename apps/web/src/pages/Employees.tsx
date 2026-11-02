@@ -31,6 +31,8 @@ function AddEmployee({ open, onClose }: { open: boolean; onClose: () => void }) 
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState(1);
   const [createLogin, setCreateLogin] = useState(true);
+  const [pfDeduct, setPfDeduct] = useState(true);
+  const [ptDeduct, setPtDeduct] = useState(true);
   const [done, setDone] = useState<{ code: string; tempPassword?: string } | null>(null);
   const m = useMasters();
   const { data: mgrs } = useQuery<any>({ queryKey: ['employees', 'all-min'], queryFn: () => get('/employees?limit=200&sort=name'), enabled: open });
@@ -39,7 +41,7 @@ function AddEmployee({ open, onClose }: { open: boolean; onClose: () => void }) 
   const act = useAct((v: Form) => post('/employees', {
     firstName: v.firstName, lastName: v.lastName, gender: v.gender, dob: v.dob || null, workEmail: v.workEmail, mobile: v.mobile || null, doj: v.doj, employmentType: v.employmentType,
     branchId: v.branchId || null, departmentId: v.departmentId || null, designationId: v.designationId || null, managerId: v.managerId || null,
-    pan: v.pan || null, uan: v.uan || null, taxRegime: v.taxRegime, createLogin, monthlyGross: v.monthlyGross ? Number(v.monthlyGross) : undefined,
+    pan: v.pan || null, uan: v.uan || null, taxRegime: v.taxRegime, createLogin, pfOptOut: !pfDeduct, ptExempt: !ptDeduct, monthlyGross: v.monthlyGross ? Number(v.monthlyGross) : undefined,
     bank: v.account && v.ifsc ? { holder: `${v.firstName} ${v.lastName}`, account: v.account, ifsc: v.ifsc } : null,
   }), { success: 'Employee added', invalidate: [['employees'], ['dashboard']], onDone: (r) => setDone(r) });
   const close = () => { onClose(); setTimeout(() => { setStep(0); setDone(null); f.reset(); }, 300); };
@@ -97,7 +99,8 @@ function AddEmployee({ open, onClose }: { open: boolean; onClose: () => void }) 
                 <Field label="Bank account" error={err('account')}><Input inputMode="numeric" {...f.register('account')} /></Field>
                 <Field label="IFSC" error={err('ifsc')}><Input {...f.register('ifsc', { setValueAs: (v) => v.toUpperCase() })} /></Field>
                 <Field label="Tax regime"><Select {...f.register('taxRegime')}><option value="new">New (default)</option><option value="old">Old</option></Select></Field>
-                <Field label="Monthly gross (₹)" error={err('monthlyGross')} hint="Split into Basic 50%, HRA 25%, LTA 10%, Special 15%"><Input inputMode="numeric" {...f.register('monthlyGross')} placeholder="e.g. 30000" /></Field>
+                <Field label={f.watch('employmentType') === 'intern' ? 'Monthly stipend (₹)' : 'Monthly gross (₹)'} error={err('monthlyGross')} hint={f.watch('employmentType') === 'intern' ? 'Interns get a stipend only — no breakup, no PF/PT/TDS' : 'Split into Basic 50%, HRA 25%, LTA 10%, Special 15%'}><Input inputMode="numeric" {...f.register('monthlyGross')} placeholder="e.g. 30000" /></Field>
+                {f.watch('employmentType') !== 'intern' && <div className="flex flex-wrap gap-6 sm:col-span-2"><Switch checked={pfDeduct} onChange={setPfDeduct} label="Deduct PF" /><Switch checked={ptDeduct} onChange={setPtDeduct} label="Deduct professional tax" /></div>}
                 <div className="sm:col-span-2"><Switch checked={createLogin} onChange={setCreateLogin} label="Create portal login with a temporary password" /></div>
               </>}
             </motion.div>
@@ -119,14 +122,16 @@ function ImportModal({ open, onClose }: { open: boolean; onClose: () => void }) 
     return lines.slice(1).filter(Boolean).map((l) => Object.fromEntries(split(l).map((v, i) => [head[i], v])));
   };
   const check = useAct((dryRun: boolean) => post('/employees/import', { rows, dryRun }), { invalidate: [['employees'], ['dashboard']], onDone: (r) => { setReport(r); if (!r.dryRun) toast.success(`${r.created} employees imported`); } });
-  const template = 'code,firstName,lastName,workEmail,gender,doj,mobile,department,designation,branch,managerCode,pan,ifsc,accountNumber,monthlyGross\n,Asha,Verma,asha.verma@company.com,F,2026-11-01,9820012345,Engineering,Developer,Mumbai HQ,EMP0001,ABCDE1234F,HDFC0001234,50100123456,30000\n';
+  const template = 'code,firstName,lastName,workEmail,gender,dob,doj,employmentType,mobile,department,designation,branch,managerCode,pan,ifsc,accountNumber,monthlyGross,uan,esiIp,pfDeduct,ptDeduct\n'
+    + ',Asha,Verma,asha.verma@company.com,F,1996-04-15,2026-11-01,permanent,9820012345,Engineering,Developer,Mumbai HQ,EMP0001,ABCDE1234F,HDFC0001234,50100123456,30000,100123456789,,Y,Y\n'
+    + ',Rohan,Mehta,rohan.mehta@company.com,M,2003-08-02,2026-11-01,intern,,,,,,,,,10000,,,N,N\n';
   return (
     <Modal open={open} onClose={() => { onClose(); setRows([]); setReport(null); }} title="Import employees" wide
       footer={<><Button variant="secondary" disabled={!rows.length} loading={check.isPending && check.variables} onClick={() => check.mutate(true)}>Validate</Button><Button disabled={!report?.dryRun || report.errorCount > 0} loading={check.isPending && !check.variables} onClick={() => check.mutate(false)}>Import {report?.valid ?? ''} rows</Button></>}>
       <div className="space-y-4">
         <a href={`data:text/csv;charset=utf-8,${encodeURIComponent(template)}`} download="employee-import-template.csv" className="text-sm font-semibold text-brand">Download CSV template</a>
         <label className="flex cursor-pointer flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-line p-8 text-center transition-colors hover:border-brand/50 hover:bg-brand-soft/40">
-          <FileUp className="h-8 w-8 text-brand" /><span className="text-sm font-semibold">{rows.length ? `${rows.length} rows loaded` : 'Choose a CSV file'}</span><span className="text-xs text-muted">Max 2,000 rows · nothing is saved until you import</span>
+          <FileUp className="h-8 w-8 text-brand" /><span className="text-sm font-semibold">{rows.length ? `${rows.length} rows loaded` : 'Choose a CSV file'}</span><span className="text-xs text-muted">Max 2,000 rows · nothing is saved until you import</span><span className="text-xs text-muted">Dates YYYY-MM-DD · pfDeduct / ptDeduct: Y or N (blank = Y) · employmentType: permanent, probation, fixed-term, intern, contractor</span>
           <input type="file" accept=".csv,text/csv" className="hidden" onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; if (file.size > 2e6) return toast.error('File too large'); setRows(parseCsv(await file.text())); setReport(null); }} />
         </label>
         {report && (

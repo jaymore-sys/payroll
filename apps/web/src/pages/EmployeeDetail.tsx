@@ -4,7 +4,7 @@ import { ArrowLeft, Briefcase, CalendarDays, Eye, EyeOff, History, IndianRupee, 
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Breakup from '../components/Breakup';
-import { Avatar, Badge, Button, Card, CardTitle, DataTable, EmptyState, Field, Input, Item, Modal, Select, Skeleton, Stagger, statusTone, Tabs, useDebounced } from '../components/ui';
+import { Avatar, Badge, Button, Card, CardTitle, DataTable, EmptyState, Field, Input, Item, Modal, Select, Skeleton, Stagger, statusTone, Switch, Tabs, useDebounced } from '../components/ui';
 import { get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { date, dateTime, inr, today } from '../lib/format';
@@ -29,9 +29,13 @@ function EditModal({ e, open, onClose }: { e: any; open: boolean; onClose: () =>
   const m = useMasters();
   const { can } = useAuth();
   const [v, setV] = useState<any>({});
-  useEffect(() => { if (open) setV({ firstName: e.firstName, lastName: e.lastName, mobile: e.mobile ?? '', departmentId: e.departmentId ?? '', designationId: e.designationId ?? '', branchId: e.branchId ?? '', taxRegime: e.taxRegime, metro: e.metro, uan: e.uan ?? '' }); }, [open, e]);
+  useEffect(() => { if (open) setV({ firstName: e.firstName, lastName: e.lastName, mobile: e.mobile ?? '', departmentId: e.departmentId ?? '', designationId: e.designationId ?? '', branchId: e.branchId ?? '', taxRegime: e.taxRegime, metro: e.metro, uan: e.uan ?? '', dob: e.dob ?? '', employmentType: e.employmentType, pfDeduct: !e.pfOptOut, ptDeduct: !e.ptExempt }); }, [open, e]);
   const admin = can('COMPANY_ADMIN');
-  const act = useAct(() => put(`/employees/${e.id}`, admin ? { ...v, departmentId: v.departmentId || null, designationId: v.designationId || null, branchId: v.branchId || null, mobile: v.mobile || null, uan: v.uan || null } : { taxRegime: v.taxRegime, metro: v.metro, uan: v.uan || null }), { success: 'Saved', invalidate: [['employee', e.id], ['employees']], onDone: onClose });
+  const pay = { taxRegime: v.taxRegime, metro: v.metro, uan: v.uan || null, pfOptOut: !v.pfDeduct, ptExempt: !v.ptDeduct };
+  const act = useAct(() => {
+    const { pfDeduct: _p, ptDeduct: _t, ...rest } = v;
+    return put(`/employees/${e.id}`, admin ? { ...rest, ...pay, departmentId: v.departmentId || null, designationId: v.designationId || null, branchId: v.branchId || null, mobile: v.mobile || null, dob: v.dob || null } : pay);
+  }, { success: 'Saved', invalidate: [['employee', e.id], ['employees']], onDone: onClose });
   const s = (k: string) => ({ value: v[k] ?? '', onChange: (x: any) => setV({ ...v, [k]: x.target.value }) });
   return (
     <Modal open={open} onClose={onClose} title="Edit employee" footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={act.isPending} onClick={() => act.mutate()}>Save</Button></>}>
@@ -42,11 +46,18 @@ function EditModal({ e, open, onClose }: { e: any; open: boolean; onClose: () =>
           <Field label="Department"><Select {...s('departmentId')}><option value="">—</option>{m.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></Field>
           <Field label="Designation"><Select {...s('designationId')}><option value="">—</option>{m.designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></Field>
           <Field label="Branch"><Select {...s('branchId')}><option value="">—</option>{m.branches.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</Select></Field>
+          <Field label="Date of birth"><Input type="date" {...s('dob')} /></Field>
+          <Field label="Employment type"><Select {...s('employmentType')}>{['permanent', 'probation', 'fixed-term', 'intern', 'contractor'].map((t) => <option key={t} value={t}>{t}</option>)}</Select></Field>
         </>}
         <Field label="Tax regime"><Select {...s('taxRegime')}><option value="new">New</option><option value="old">Old</option></Select></Field>
         <Field label="UAN"><Input {...s('uan')} /></Field>
         <Field label="HRA city"><Select value={v.metro ? '1' : '0'} onChange={(x) => setV({ ...v, metro: x.target.value === '1' })}><option value="1">Metro (50%)</option><option value="0">Non-metro (40%)</option></Select></Field>
       </div>
+      <div className="mt-4 flex flex-wrap gap-6 rounded-xl bg-surface-2/60 p-3">
+        <Switch checked={!!v.pfDeduct} onChange={(x) => setV({ ...v, pfDeduct: x })} label="Deduct PF" />
+        <Switch checked={!!v.ptDeduct} onChange={(x) => setV({ ...v, ptDeduct: x })} label="Deduct professional tax" />
+      </div>
+      {v.employmentType === 'intern' && <p className="mt-2 text-xs text-muted">Interns are paid a stipend only — no PF, PT or TDS.</p>}
       {!admin && <p className="mt-3 text-xs text-muted">Payroll Managers can edit pay fields only.</p>}
     </Modal>
   );
@@ -58,13 +69,14 @@ function ReviseModal({ e, open, onClose }: { e: any; open: boolean; onClose: () 
   const dctc = useDebounced(Number(ctc), 400);
   const { data: preview, error } = useQuery<any>({ queryKey: ['ctc-preview', dctc, e.metro, e.state, e.gender], queryFn: () => post('/ctc/preview', { monthlyGross: dctc, metro: !!e.metro, state: e.state ?? 'MH', gender: e.gender === 'F' ? 'F' : 'M' }), enabled: dctc >= 1000 });
   const act = useAct(() => post(`/employees/${e.id}/salary-revisions`, { monthlyGross: Number(ctc), effectiveFrom: eff }), { success: 'Salary revised', invalidate: [['structures', e.id], ['dashboard']], onDone: onClose });
+  const intern = e.employmentType === 'intern';
   return (
     <Modal open={open} onClose={onClose} title="Revise salary" wide footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button disabled={!preview} loading={act.isPending} onClick={() => act.mutate()}>Save revision</Button></>}>
       <div className="mb-5 grid gap-4 sm:grid-cols-2">
-        <Field label="New monthly gross (₹)" hint="Split: Basic 50% · HRA 25% · LTA 10% · Special 15%"><Input inputMode="numeric" autoFocus value={ctc} onChange={(x) => setCtc(x.target.value.replace(/\D/g, ''))} placeholder="e.g. 30000" /></Field>
+        <Field label={intern ? 'Monthly stipend (₹)' : 'New monthly gross (₹)'} hint={intern ? 'Interns get a stipend only — no breakup' : 'Split: Basic 50% · HRA 25% · LTA 10% · Special 15%'}><Input inputMode="numeric" autoFocus value={ctc} onChange={(x) => setCtc(x.target.value.replace(/\D/g, ''))} placeholder="e.g. 30000" /></Field>
         <Field label="Effective from" hint="Backdated revisions create arrears in the next payroll run"><Input type="date" value={eff} onChange={(x) => setEff(x.target.value)} /></Field>
       </div>
-      {error ? <p className="text-sm text-bad">{(error as Error).message}</p> : preview ? <Breakup p={preview} compact /> : <p className="py-8 text-center text-sm text-muted">Enter the monthly gross to see the breakup</p>}
+      {error ? <p className="text-sm text-bad">{(error as Error).message}</p> : preview ? <Breakup p={preview} intern={intern} compact /> : <p className="py-8 text-center text-sm text-muted">Enter the monthly gross to see the breakup</p>}
     </Modal>
   );
 }
@@ -137,7 +149,7 @@ export default function EmployeeDetail() {
               <Card><CardTitle>Personal</CardTitle><div className="divide-y divide-line/70"><Row l="Date of birth" v={date(e.dob)} /><Row l="Gender" v={{ M: 'Male', F: 'Female', O: 'Other' }[e.gender as string]} /><Row l="Personal email" v={e.personalEmail} /><Row l="Marital status" v={e.maritalStatus} /></div></Card>
               <Card><CardTitle sub="Encrypted at rest; masked by default">Statutory & bank</CardTitle><div className="divide-y divide-line/70">
                 <Row l="PAN" v={<span className="font-mono">{e.pan ?? 'Missing'}</span>} /><Row l="Bank account" v={<span className="font-mono">{e.bank ?? 'Missing'}</span>} /><Row l="Aadhaar" v={<span className="font-mono">{e.aadhaar}</span>} />
-                <Row l="UAN" v={e.uan} /><Row l="Tax regime" v={<Badge tone="brand">{e.taxRegime}</Badge>} /><Row l="HRA city" v={e.metro ? 'Metro' : 'Non-metro'} /></div>
+                <Row l="UAN" v={e.uan} /><Row l="PF / PT" v={e.employmentType === 'intern' ? 'Not deducted (intern)' : `${e.pfOptOut ? 'No PF' : 'PF'} · ${e.ptExempt ? 'No PT' : 'PT'}`} /><Row l="Tax regime" v={<Badge tone="brand">{e.taxRegime}</Badge>} /><Row l="HRA city" v={e.metro ? 'Metro' : 'Non-metro'} /></div>
                 <Sensitive id={id} /></Card>
             </> : <Card className="lg:col-span-2"><EmptyState icon={<ShieldAlert className="h-7 w-7" />} title="Pay details are private" sub="Only HR, payroll and the employee can see salary, PAN and bank details." /></Card>}
           </Stagger>)}
@@ -145,7 +157,7 @@ export default function EmployeeDetail() {
         {tab === 'salary' && (
           <Stagger className="grid gap-4 xl:grid-cols-[1fr_320px]">
             <Card hover={false}><CardTitle sub={current ? `Effective ${date(current.effectiveFrom)} · Annual CTC ${inr(current.annualCtc)}` : undefined}>Current structure</CardTitle>
-              {!structures ? <Skeleton className="h-80" /> : current ? <Breakup p={current.breakup} /> : <EmptyState icon={<IndianRupee className="h-7 w-7" />} title="No salary structure yet" action={(admin || pm) && <Button onClick={() => setModal('revise')}>Set salary</Button>} />}</Card>
+              {!structures ? <Skeleton className="h-80" /> : current ? <Breakup p={current.breakup} intern={e.employmentType === 'intern'} /> : <EmptyState icon={<IndianRupee className="h-7 w-7" />} title="No salary structure yet" action={(admin || pm) && <Button onClick={() => setModal('revise')}>Set salary</Button>} />}</Card>
             <Card hover={false}><CardTitle>Revision history</CardTitle>
               <ol className="relative ml-2 space-y-5 border-l-2 border-line pl-5">{structures?.map((s, i) => (
                 <motion.li key={s.id} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.08 }} className="relative">

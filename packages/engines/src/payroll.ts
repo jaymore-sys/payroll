@@ -29,9 +29,13 @@ export interface PayslipInput {
   employee: StatEmployee & { doj: string; lastWorkingDay?: string | null; regime: Regime; ageBand: AgeBand; metro: boolean; hasPan: boolean };
   payableDaysMethod?: 'calendar' | 'fixed30' | 'working';
   lopDays?: number;
-  bonus?: number;                        // one-time, taxable, not prorated, outside ESI/PF wages
-  otherEarnings?: number;                // one-time taxable earnings (incentive, arrears)
+  // One-time adjustments: added to / taken from net pay only — PF, ESI, PT and TDS are not changed by them.
+  bonus?: number;
+  arrears?: number;
+  otherEarnings?: number;
   otherDeductions?: number;              // recoveries, canteen, advances
+  /** Intern: paid a stipend only — no salary breakup, no statutory deductions, no TDS. */
+  intern?: boolean;
   ytd?: { taxable: number; tds: number; pf: number; pt: number; months?: number }; // finalised payslips earlier in this FY; months = how many
   prevEmployer?: { taxable: number; tds: number };
 }
@@ -51,14 +55,16 @@ export function computePayslip(i: PayslipInput, statRules: StatutoryRule[], taxR
   if (lop) notes.push(`${lop} LOP day(s)`);
 
   // 1. Earnings, prorated by payable days
-  const earnings = i.components.map((c) => ({ code: c.code, name: c.name, full: c.monthly, amount: n(rupee(D(c.monthly).times(ratio))), isWage: c.isWage }));
+  const comps = i.intern ? [{ code: 'STIPEND', name: 'Stipend', monthly: n(i.components.reduce((a, c) => a.plus(c.monthly), D(0))), isWage: false }] : i.components;
+  const earnings = comps.map((c) => ({ code: c.code, name: c.name, full: c.monthly, amount: n(rupee(D(c.monthly).times(ratio))), isWage: c.isWage }));
   const regular = earnings.reduce((a, e) => a.plus(e.amount), D(0));
-  const bonus = D(i.bonus ?? 0), other = D(i.otherEarnings ?? 0);
-  const gross = regular.plus(bonus).plus(other);
+  const bonus = D(i.bonus ?? 0), arrears = D(i.arrears ?? 0), other = D(i.otherEarnings ?? 0);
+  const gross = regular.plus(bonus).plus(arrears).plus(other);
+  if (i.intern) return internSlip(i, { dim, period, lop, payable, earnings, regular, bonus, arrears, other, gross, notes });
 
   // 2. Statutory on prorated wages
   const wages = earnings.filter((e) => e.isWage).reduce((a, e) => a.plus(e.amount), D(0)).plus(rupee(D(i.deemedWages ?? 0).times(ratio)));
-  const stat = computeStatutory(i.employee, { month: i.month, pfWage: n(wages), esiGross: n(regular.plus(other)), grossMonthly: n(gross), payableDays: Math.max(payable, 1), wages: n(wages) }, statRules);
+  const stat = computeStatutory(i.employee, { month: i.month, pfWage: n(wages), esiGross: n(regular), grossMonthly: n(regular), payableDays: Math.max(payable, 1) }, statRules);
   const pfEmp = D((stat.pf?.employee as number) ?? 0).plus((stat.pf?.vpf as number) ?? 0);
   const esiEmp = D((stat.esi?.employee as number) ?? 0);
   const pt = D(stat.pt.amount), lwf = D(stat.lwf.employee);
@@ -87,7 +93,7 @@ export function computePayslip(i: PayslipInput, statRules: StatutoryRule[], taxR
   const hraFull = D(i.components.find((c) => c.code === 'HRA')?.monthly ?? 0);
   const remaining = 12 - m;
   const projected = (extra: Decimal) => {
-    const salary = D(ytd.taxable).plus(regular).plus(other).plus(recurringFull.times(remaining)).plus(prev.taxable).plus(extra);
+    const salary = D(ytd.taxable).plus(regular).plus(recurringFull.times(remaining)).plus(prev.taxable).plus(extra);
     const rule = findTaxRule(taxRules, taxYearOf(i.month), i.employee.regime, i.employee.ageBand);
     return computeRegime(rule, {
       taxYear: rule.taxYear, ageBand: i.employee.ageBand, annualSalary: n(salary),
@@ -97,13 +103,13 @@ export function computePayslip(i: PayslipInput, statRules: StatutoryRule[], taxR
     });
   };
   const withoutBonus = projected(D(0));
-  const withBonus = bonus.gt(0) ? projected(bonus) : withoutBonus;
+  const withBonus = withoutBonus; // adjustments (bonus, arrears, other) never change TDS
   // Assumed earlier months carry their share of the year's tax, so the rest spreads evenly.
   // Each assumed month carries its share of the year's tax (months on the rolls this FY = earlier + remaining incl. this one).
   const assumedTds = assumeEarlier ? D(withoutBonus.totalTax).times(assumed).dividedBy(earlier + 12 - m + 1) : D(0);
   const paidSoFar = D(ytd.tds).plus(prev.tds).plus(assumedTds);
   const regularTds = max(0, rupee(D(withoutBonus.totalTax).minus(paidSoFar).dividedBy(12 - m + 1)));
-  let tds = regularTds.plus(max(0, D(withBonus.totalTax).minus(withoutBonus.totalTax)));
+  let tds = regularTds;
   // No PAN (s.206AA): the year's TDS is the higher of 20% or the average rate on taxable income — only when tax is
   // actually payable; no TDS is due when income is below the taxable limit.
   if (!i.employee.hasPan && withBonus.totalTax > 0) {
@@ -126,13 +132,14 @@ export function computePayslip(i: PayslipInput, statRules: StatutoryRule[], taxR
 
   // 5. Employer cost
   const erPf = D((stat.pf?.employerTotal as number) ?? 0), edli = D((stat.pf?.edli as number) ?? 0), admin = D((stat.pf?.admin as number) ?? 0);
-  const erEsi = D((stat.esi?.employer as number) ?? 0), erLwf = D(stat.lwf.employer), grat = D(stat.gratuityProvision.amount);
-  const employerCost = erPf.plus(edli).plus(admin).plus(erEsi).plus(erLwf).plus(grat);
+  const erEsi = D((stat.esi?.employer as number) ?? 0), erLwf = D(stat.lwf.employer);
+  const employerCost = erPf.plus(edli).plus(admin).plus(erEsi).plus(erLwf);
 
   const L = (section: string, label: string, amount: Decimal | number, ruleId?: string | null) => ({ section, label, amount: n(D(amount)), ruleId: ruleId ?? undefined });
   const lines = [
     ...earnings.map((e) => L('earning', e.name, e.amount)),
     ...(bonus.gt(0) ? [L('earning', 'Bonus', bonus)] : []),
+    ...(arrears.gt(0) ? [L('earning', 'Arrears', arrears)] : []),
     ...(other.gt(0) ? [L('earning', 'Other earnings', other)] : []),
     L('deduction', 'Employee PF Contribution', pfEmp, stat.pf?.ruleId as string),
     L('deduction', 'ESI', esiEmp, stat.esi?.ruleId as string),
@@ -141,18 +148,42 @@ export function computePayslip(i: PayslipInput, statRules: StatutoryRule[], taxR
     L('deduction', 'Income tax (TDS)', tds, `${taxYearOf(i.month)}/${i.employee.regime}`),
     ...(otherDed.gt(0) ? [L('deduction', 'Other deductions', otherDed)] : []),
     L('employer', 'Employer PF', erPf, stat.pf?.ruleId as string), L('employer', 'EDLI', edli), L('employer', 'PF admin', admin),
-    L('employer', 'Employer ESI', erEsi, stat.esi?.ruleId as string), L('employer', 'Employer LWF', erLwf), L('employer', 'Gratuity provision', grat),
+    L('employer', 'Employer ESI', erEsi, stat.esi?.ruleId as string), L('employer', 'Employer LWF', erLwf),
   ].filter((l) => l.section === 'earning' || l.amount !== 0);
 
   return {
     month: i.month, daysInMonth: dim, periodDays: period, lopDays: lop, payableDays: payable,
-    earnings, gross: n(gross), taxableGross: n(gross),
+    earnings, adjustments: { bonus: n(bonus), arrears: n(arrears), other: n(other) }, gross: n(gross), taxableGross: n(regular),
     deductions: { pf: n(pfEmp), esi: n(esiEmp), pt: n(pt), lwf: n(lwf), tds: n(tds), other: n(otherDed), total: n(totalDed) },
     net: n(net),
-    employer: { pf: n(erPf), eps: (stat.pf?.eps as number) ?? 0, epf: (stat.pf?.epf as number) ?? 0, edli: n(edli), admin: n(admin), esi: n(erEsi), lwf: n(erLwf), gratuity: n(grat), total: n(employerCost) },
-    pfWage: (stat.pf?.pfWage as number) ?? 0, esiGross: stat.esi?.covered ? n(regular.plus(other)) : 0,
+    employer: { pf: n(erPf), eps: (stat.pf?.eps as number) ?? 0, epf: (stat.pf?.epf as number) ?? 0, edli: n(edli), admin: n(admin), esi: n(erEsi), lwf: n(erLwf), total: n(employerCost) },
+    pfWage: (stat.pf?.pfWage as number) ?? 0, esiGross: stat.esi?.covered ? n(regular) : 0,
     tax: { regime: i.employee.regime, annualTax: withBonus.totalTax, projectedTaxable: withBonus.taxableIncome, paidSoFar: n(rupee(paidSoFar)), assumedEarlierMonths: assumed, thisMonth: n(tds), worksheet: withBonus.lines as Line[] },
     lines, notes,
   };
 }
 export type Payslip = ReturnType<typeof computePayslip>;
+
+/** Intern payslip: Stipend (+ any adjustments) and net pay — nothing else. */
+function internSlip(i: PayslipInput, c: { dim: number; period: number; lop: number; payable: number; earnings: { code: string; name: string; full: number; amount: number; isWage: boolean }[]; regular: Decimal; bonus: Decimal; arrears: Decimal; other: Decimal; gross: Decimal; notes: string[] }) {
+  const otherDed = Decimal.min(D(i.otherDeductions ?? 0), c.gross);
+  const net = rupee(c.gross.minus(otherDed));
+  const L = (section: string, label: string, amount: Decimal) => ({ section, label, amount: n(amount), ruleId: undefined as string | undefined });
+  const lines = [
+    L('earning', 'Stipend', c.regular),
+    ...(c.bonus.gt(0) ? [L('earning', 'Bonus', c.bonus)] : []),
+    ...(c.arrears.gt(0) ? [L('earning', 'Arrears', c.arrears)] : []),
+    ...(c.other.gt(0) ? [L('earning', 'Other earnings', c.other)] : []),
+    ...(otherDed.gt(0) ? [L('deduction', 'Other deductions', otherDed)] : []),
+  ];
+  return {
+    month: i.month, daysInMonth: c.dim, periodDays: c.period, lopDays: c.lop, payableDays: c.payable,
+    earnings: c.earnings, adjustments: { bonus: n(c.bonus), arrears: n(c.arrears), other: n(c.other) }, gross: n(c.gross), taxableGross: 0,
+    deductions: { pf: 0, esi: 0, pt: 0, lwf: 0, tds: 0, other: n(otherDed), total: n(otherDed) },
+    net: n(net),
+    employer: { pf: 0, eps: 0, epf: 0, edli: 0, admin: 0, esi: 0, lwf: 0, total: 0 },
+    pfWage: 0, esiGross: 0,
+    tax: { regime: i.employee.regime, annualTax: 0, projectedTaxable: 0, paidSoFar: 0, assumedEarlierMonths: 0, thisMonth: 0, worksheet: [] as Line[] },
+    lines, notes: [...c.notes, 'Intern: stipend only'], intern: true as const,
+  };
+}

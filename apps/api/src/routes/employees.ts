@@ -34,12 +34,12 @@ const payFields = {
   aadhaar: z.string().regex(/^\d{12}$/, 'Aadhaar must be 12 digits').nullish(),
   uan: z.string().regex(/^\d{12}$/, 'UAN must be 12 digits').nullish().or(z.literal('').transform(() => null)),
   esiIp: z.string().regex(/^\d{10}$/, 'ESI IP must be 10 digits').nullish().or(z.literal('').transform(() => null)),
-  pfOptOut: z.boolean(), international: z.boolean(), taxRegime: z.enum(['new', 'old']), metro: z.boolean(),
+  pfOptOut: z.boolean(), ptExempt: z.boolean(), international: z.boolean(), taxRegime: z.enum(['new', 'old']), metro: z.boolean(),
 };
 /** Exact monthly salary components (e.g. copied from RazorpayX's Master CTC Report). */
 const componentsSchema = z.array(z.object({ code: z.string().regex(/^[A-Z0-9_]{2,20}$/), name: z.string().min(1).max(60), monthly: z.number().min(0).max(1e8), isWage: z.boolean() })).min(1).max(20);
 const createSchema = z.object({ ...personal, ...payFields, code: z.string().regex(/^[A-Z0-9-]{2,20}$/).optional(), createLogin: z.boolean().default(false), annualCtc: z.number().positive().max(1e9).optional(), monthlyGross: z.number().positive().max(1e8).optional(), components: componentsSchema.optional() })
-  .partial({ pfOptOut: true, international: true, taxRegime: true, metro: true, noticeDays: true, employmentType: true });
+  .partial({ pfOptOut: true, ptExempt: true, international: true, taxRegime: true, metro: true, noticeDays: true, employmentType: true });
 
 /** Encrypt sensitive inputs; only last-4 is kept in clear for masked display. Full Aadhaar is never stored. */
 function sensitiveColumns(d: { pan?: string | null; bank?: z.infer<typeof bankSchema> | null; aadhaar?: string | null }) {
@@ -71,7 +71,7 @@ function view(r: { row: typeof E.$inferSelect } & Record<string, unknown>, showP
   return {
     ...base, dob: row.dob, personalEmail: row.personalEmail, maritalStatus: row.maritalStatus, probationEnd: row.probationEnd, noticeDays: row.noticeDays,
     pan: mask(row.panLast4), bank: mask(row.bankLast4), aadhaar: mask(row.aadhaarLast4), uan: row.uan, esiIp: row.esiIp,
-    pfOptOut: row.pfOptOut, international: row.international, taxRegime: row.taxRegime, metro: row.metro,
+    pfOptOut: row.pfOptOut, ptExempt: row.ptExempt, international: row.international, taxRegime: row.taxRegime, metro: row.metro,
     lastWorkingDay: row.lastWorkingDay, exitReason: row.exitReason,
   };
 }
@@ -154,12 +154,19 @@ export async function createRevision(req: any, empId: string, pay: { annualCtc?:
   const { e, state, metro, company } = await salaryFor(cid, empId);
   const { stat, tax } = await loadRules();
   const age = e.dob ? new Date(effectiveFrom).getFullYear() - new Date(e.dob).getFullYear() : 30;
-  const template = pay.components?.map((c) => ({ code: c.code, name: c.name, calc: 'fixed' as const, value: c.monthly, isWage: c.isWage, taxable: c.code === 'HRA' ? 'partial' as const : 'full' as const }));
-  const monthlyGross = template ? pay.components!.reduce((a, c) => a + c.monthly, 0) : pay.monthlyGross;
+  const intern = e.employmentType === 'intern';
+  let template = pay.components?.map((c) => ({ code: c.code, name: c.name, calc: 'fixed' as const, value: c.monthly, isWage: c.isWage, taxable: c.code === 'HRA' ? 'partial' as const : 'full' as const }));
+  let monthlyGross = template ? pay.components!.reduce((a, c) => a + c.monthly, 0) : pay.monthlyGross;
+  // Interns get a stipend only: one component, no PF / PT / ESI.
+  if (intern) {
+    monthlyGross = Math.round(monthlyGross ?? (pay.annualCtc ?? 0) / 12);
+    template = [{ code: 'STIPEND', name: 'Stipend', calc: 'fixed', value: monthlyGross, isWage: false, taxable: 'full' }];
+  }
   // PF/ESI shown with today's rules for an old joining date (payroll itself always uses the payroll month's rules).
   const asOf = [effectiveFrom.slice(0, 7), new Date().toISOString().slice(0, 7)].sort()[1];
   const preview = splitCtc({ annualCtc: pay.annualCtc ?? 0, monthlyGross, annualVariable, metro, state, pfCapMode: company.pfCapMode as 'capped' | 'actual', gender: e.gender === 'F' ? 'F' : 'M', age, doj: e.doj, asOf, labourCodeMode: company.labourCodeMode,
-    template, pfOptOut: e.pfOptOut, internationalWorker: e.international, esiExempt: !company.esiEnabled }, stat, tax);
+    template, pfOptOut: e.pfOptOut || intern, ptExempt: e.ptExempt || intern, internationalWorker: e.international, esiExempt: !company.esiEnabled || intern }, stat, tax);
+  if (intern) Object.assign(preview, { intern: true });
   const annualCtc = preview.checkCtc;
   return db.transaction(async (tx) => {
     const dayBefore = new Date(new Date(effectiveFrom).getTime() - 864e5).toISOString().slice(0, 10);
@@ -197,7 +204,7 @@ employeesRouter.post('/employees', requireRole('COMPANY_ADMIN'), h(async (req, r
   res.status(201).json({ id: row.id, code: row.code, tempPassword });
 }));
 
-const PAY_ONLY = ['pan', 'bank', 'aadhaar', 'uan', 'esiIp', 'pfOptOut', 'international', 'taxRegime', 'metro'] as const;
+const PAY_ONLY = ['pan', 'bank', 'aadhaar', 'uan', 'esiIp', 'pfOptOut', 'ptExempt', 'international', 'taxRegime', 'metro'] as const;
 employeesRouter.put('/employees/:id', requireRole('COMPANY_ADMIN', 'PAYROLL_MANAGER'), h(async (req, res) => {
   const cid = req.user!.cid;
   let d = parse(z.object({ ...personal, ...payFields, status: z.enum(['DRAFT', 'ONBOARDING', 'ACTIVE', 'NOTICE', 'EXITED', 'SETTLED']) }).partial(), req.body);
@@ -234,6 +241,8 @@ employeesRouter.get('/employees/:id/history', requireRole('COMPANY_ADMIN', 'PAYR
 }));
 
 /* ---------------- bulk import (spec §4) ---------------- */
+/** Y / N column, blank = Y (deduct). */
+const yesNo = z.preprocess((v) => (v === undefined || v === null || String(v).trim() === '' ? true : /^(y|yes|true|1)$/i.test(String(v).trim()) ? true : /^(n|no|false|0)$/i.test(String(v).trim()) ? false : v), z.boolean({ message: 'use Y or N' }));
 const importRow = z.object({
   code: z.string().regex(/^[A-Z0-9-]{2,20}$/).optional().or(z.literal('').transform(() => undefined)),
   firstName: personal.firstName, lastName: personal.lastName, workEmail: personal.workEmail, gender: personal.gender, doj: personal.doj,
@@ -242,6 +251,11 @@ const importRow = z.object({
   accountNumber: z.string().regex(/^\d{6,18}$/).optional().or(z.literal('').transform(() => undefined)),
   annualCtc: z.coerce.number().positive().optional().or(z.literal('').transform(() => undefined)),
   monthlyGross: z.coerce.number().positive().optional().or(z.literal('').transform(() => undefined)),
+  dob: z.string().date().optional().or(z.literal('').transform(() => undefined)),
+  employmentType: personal.employmentType.optional().or(z.literal('').transform(() => undefined)),
+  uan: z.string().regex(/^\d{12}$/, 'UAN must be 12 digits').optional().or(z.literal('').transform(() => undefined)),
+  esiIp: z.string().regex(/^\d{10}$/, 'ESI IP must be 10 digits').optional().or(z.literal('').transform(() => undefined)),
+  pfDeduct: yesNo, ptDeduct: yesNo,
 });
 employeesRouter.post('/employees/import', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const { rows, dryRun } = parse(z.object({ rows: z.array(z.record(z.unknown())).min(1).max(2000), dryRun: z.boolean().default(true) }), req.body);
@@ -282,6 +296,7 @@ employeesRouter.post('/employees/import', requireRole('COMPANY_ADMIN'), h(async 
     const [mgr] = d.managerCode ? await db.select({ id: E.id }).from(E).where(and(eq(E.companyId, cid), eq(E.code, d.managerCode))) : [];
     const [row] = await insertReturning(E, {
       companyId: cid, code, firstName: d.firstName, lastName: d.lastName, workEmail: d.workEmail, gender: d.gender, doj: d.doj, mobile: d.mobile,
+      dob: d.dob, employmentType: d.employmentType ?? 'permanent', uan: d.uan, esiIp: d.esiIp, pfOptOut: !d.pfDeduct, ptExempt: !d.ptDeduct,
       departmentId: byName(deps, d.department), designationId: byName(desigs, d.designation), branchId: byName(brs, d.branch), managerId: mgr?.id, createdBy: req.user!.sub,
       ...sensitiveColumns({ pan: d.pan, bank: d.accountNumber ? { holder: `${d.firstName} ${d.lastName}`, account: d.accountNumber, ifsc: d.ifsc! } : undefined }),
     });

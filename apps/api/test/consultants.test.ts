@@ -51,6 +51,13 @@ describe('consultants', () => {
     expect(neha).toMatchObject({ amount: 54000, tds: 5400, net: 48600 }); // 60,000 × 27/30
     expect(small).toMatchObject({ amount: 3000, tds: 0, net: 3000 });
   });
+  it('amount and TDS can be typed over and are remembered', async () => {
+    await as('payroll').post(`/consultant-runs/${month}/calculate`, { items: [{ consultantId: a, lopDays: 3, adjustment: 0, amountOverride: 55000, tdsOverride: 5000 }, { consultantId: b, lopDays: 0, adjustment: 0 }] });
+    const neha = (await as('payroll').get(`/consultant-runs/${month}`)).body.items.find((i: { id: string }) => i.id === a);
+    expect(neha).toMatchObject({ amount: 55000, tds: 5000, net: 50000, amountOverride: 55000, tdsOverride: 5000 });
+    await as('payroll').post(`/consultant-runs/${month}/calculate`, { items: [{ consultantId: a, lopDays: 3, adjustment: 0, amountOverride: null, tdsOverride: null }, { consultantId: b, lopDays: 0, adjustment: 0 }] });
+    expect((await as('payroll').get(`/consultant-runs/${month}`)).body.items.find((i: { id: string }) => i.id === a)).toMatchObject({ amount: 54000, tds: 5400 });
+  });
   it('only a Company Admin approves; the sheet comes after approval', async () => {
     expect((await as('payroll').get(`/consultant-runs/${month}/export.xlsx`)).status).toBe(409);
     expect((await as('payroll').post(`/consultant-runs/${month}/approve`)).status).toBe(403);

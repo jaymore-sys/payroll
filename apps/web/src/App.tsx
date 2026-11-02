@@ -11,7 +11,7 @@ const pages = {
   Dashboard: () => import('./pages/Dashboard'), Employees: () => import('./pages/Employees'), EmployeeDetail: () => import('./pages/EmployeeDetail'),
   Attendance: () => import('./pages/Attendance'), Approvals: () => import('./pages/Approvals'), TaxCalculator: () => import('./pages/TaxCalculator'),
   CtcBuilder: () => import('./pages/CtcBuilder'), Settings: () => import('./pages/Settings'),
-  Users: () => import('./pages/Users'), Payroll: () => import('./pages/Payroll'), PayrollRun: () => import('./pages/PayrollRun'), Payslips: () => import('./pages/Payslips'), Consultants: () => import('./pages/Consultants'), PayslipPrint: () => import('./pages/PayslipPrint'), Audit: () => import('./pages/Audit'), Profile: () => import('./pages/Profile'), NotFound: () => import('./pages/NotFound'),
+  Users: () => import('./pages/Users'), Payroll: () => import('./pages/Payroll'), PayrollRun: () => import('./pages/PayrollRun'), Payslips: () => import('./pages/Payslips'), Consultants: () => import('./pages/Consultants'), Reports: () => import('./pages/Reports'), PayslipPrint: () => import('./pages/PayslipPrint'), Audit: () => import('./pages/Audit'), Profile: () => import('./pages/Profile'), NotFound: () => import('./pages/NotFound'),
 };
 const Login = lazy(() => import('./pages/Login'));
 const SetPassword = lazy(() => import('./pages/SetPassword'));
@@ -32,6 +32,7 @@ const PayrollRun = lazy(pages.PayrollRun);
 const Payslips = lazy(pages.Payslips);
 const PayslipPrint = lazy(pages.PayslipPrint);
 const Consultants = lazy(pages.Consultants);
+const Reports = lazy(pages.Reports);
 
 const PageSkeleton = () => (
   <div className="space-y-4">
@@ -77,6 +78,7 @@ export default function App() {
                 <Route path="payroll" element={<Guard roles={ADM}><Suspense fallback={<PageSkeleton />}><Payroll /></Suspense></Guard>} />
                 <Route path="payroll/:id" element={<Guard roles={ADM}><Suspense fallback={<PageSkeleton />}><PayrollRun /></Suspense></Guard>} />
                 <Route path="consultants" element={<Guard roles={ADM}><Suspense fallback={<PageSkeleton />}><Consultants /></Suspense></Guard>} />
+                <Route path="reports" element={<Guard roles={ADM}><Suspense fallback={<PageSkeleton />}><Reports /></Suspense></Guard>} />
                 <Route path="payslips" element={<Suspense fallback={<PageSkeleton />}><Payslips /></Suspense>} />
                 <Route path="attendance" element={<Guard roles={[...ADM, 'REPORTING_MANAGER']}><Suspense fallback={<PageSkeleton />}><Attendance /></Suspense></Guard>} />
                 <Route path="approvals" element={<Guard roles={['COMPANY_ADMIN']}><Suspense fallback={<PageSkeleton />}><Approvals /></Suspense></Guard>} />

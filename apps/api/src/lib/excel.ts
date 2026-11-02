@@ -3,7 +3,7 @@ import ExcelJS from 'exceljs';
 
 export interface SheetRow {
   code: string; name: string; department: string; designation: string; state: string;
-  panLast4: string | null; uan: string | null; hold: boolean;
+  pan: string | null; uan: string | null; // held salaries are not passed in at all
   attendance?: { working: number; present: number; paidLeave: number; overtime: number } | null;
   bank: { holder: string; account: string; ifsc: string; bankName?: string } | null;
   payslip: Payslip;
@@ -53,12 +53,14 @@ export async function buildSalaryWorkbook(o: { company: string; month: string; l
   const regCols: { h: string; w: number; v: (r: SheetRow) => string | number | null; money?: boolean }[] = [
     { h: 'Emp code', w: 11, v: (r) => r.code }, { h: 'Name', w: 22, v: (r) => r.name },
     { h: 'Department', w: 16, v: (r) => r.department }, { h: 'Designation', w: 20, v: (r) => r.designation },
-    { h: 'PAN', w: 12, v: (r) => (r.panLast4 ? `XXXXXX${r.panLast4}` : 'MISSING') }, { h: 'UAN', w: 14, v: (r) => r.uan },
+    { h: 'PAN', w: 12, v: (r) => r.pan ?? 'MISSING' }, { h: 'UAN', w: 14, v: (r) => r.uan },
     { h: 'Days in month', w: 8, v: (r) => r.payslip.daysInMonth }, { h: 'Working days', w: 8, v: (r) => r.attendance?.working ?? null },
     { h: 'Present', w: 8, v: (r) => r.attendance?.present ?? null }, { h: 'Paid leave', w: 8, v: (r) => r.attendance?.paidLeave ?? null },
     { h: 'LOP days', w: 7, v: (r) => r.payslip.lopDays }, { h: 'Payable days', w: 8, v: (r) => r.payslip.payableDays },
     ...compNames.map((n) => ({ h: n, w: 13, money: true, v: (r: SheetRow) => r.payslip.earnings.find((e) => e.name === n)?.amount ?? 0 })),
-    { h: 'Bonus / other earnings', w: 13, money: true, v: (r) => r.payslip.gross - r.payslip.earnings.reduce((a, e) => a + e.amount, 0) },
+    { h: 'Bonus', w: 11, money: true, v: (r) => r.payslip.adjustments?.bonus ?? 0 },
+    { h: 'Arrears', w: 11, money: true, v: (r) => r.payslip.adjustments?.arrears ?? 0 },
+    { h: 'Other earnings', w: 11, money: true, v: (r) => r.payslip.adjustments?.other ?? 0 },
     { h: 'Gross earnings', w: 14, money: true, v: (r) => r.payslip.gross },
     { h: 'PF (employee)', w: 12, money: true, v: (r) => r.payslip.deductions.pf }, { h: 'ESI (employee)', w: 11, money: true, v: (r) => r.payslip.deductions.esi },
     { h: 'Professional tax', w: 11, money: true, v: (r) => r.payslip.deductions.pt }, { h: 'LWF', w: 8, money: true, v: (r) => r.payslip.deductions.lwf },
@@ -67,32 +69,29 @@ export async function buildSalaryWorkbook(o: { company: string; month: string; l
     { h: 'NET PAY', w: 14, money: true, v: (r) => r.payslip.net },
     { h: 'Employer PF', w: 12, money: true, v: (r) => r.payslip.employer.pf }, { h: 'Employer ESI', w: 12, money: true, v: (r) => r.payslip.employer.esi },
     { h: 'EDLI + PF admin', w: 12, money: true, v: (r) => r.payslip.employer.edli + r.payslip.employer.admin },
-    { h: 'Employer LWF', w: 10, money: true, v: (r) => r.payslip.employer.lwf }, { h: 'Gratuity provision', w: 12, money: true, v: (r) => r.payslip.employer.gratuity },
+    { h: 'Employer LWF', w: 10, money: true, v: (r) => r.payslip.employer.lwf },
     { h: 'Cost to company', w: 14, money: true, v: (r) => r.payslip.gross + r.payslip.employer.total },
-    { h: 'Status', w: 10, v: (r) => (r.hold ? 'ON HOLD' : 'Pay') }, { h: 'Notes', w: 30, v: (r) => r.payslip.notes.map((n) => (n.startsWith('No earlier payslips') ? 'YTD assumed (see Summary)' : n)).join('; ') },
+    { h: 'Notes', w: 30, v: (r) => r.payslip.notes.map((n) => (n.startsWith('No earlier payslips') ? 'YTD assumed (see Summary)' : n)).join('; ') },
   ];
   title(reg, 'Salary register', sub, regCols.length);
   reg.getRow(3).values = regCols.map((c) => c.h);
   regCols.forEach((c, i) => { reg.getColumn(i + 1).width = c.w; if (c.money) reg.getColumn(i + 1).numFmt = INR; });
   header(reg, 3);
-  o.rows.forEach((r) => {
-    const row = reg.addRow(regCols.map((c) => c.v(r)));
-    if (r.hold) row.font = { color: { argb: 'FFB45309' } };
-  });
+  o.rows.forEach((r) => reg.addRow(regCols.map((c) => c.v(r))));
   const firstData = 4, lastData = 3 + o.rows.length;
-  const firstMoney = regCols.findIndex((c) => c.money) + 1, lastMoney = regCols.length - 2;
+  const firstMoney = regCols.findIndex((c) => c.money) + 1, lastMoney = regCols.length - 1;
   if (o.rows.length) totalsRow(reg, lastData + 1, firstData, lastData, firstMoney, lastMoney);
   reg.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: regCols.length } };
   const netCol = regCols.findIndex((c) => c.h === 'NET PAY') + 1;
   reg.getColumn(netCol).font = { bold: true };
 
-  /* ---- Bank transfer (excludes salaries on hold and missing bank details) ---- */
+  /* ---- Bank transfer (excludes missing bank details) ---- */
   const bank = wb.addWorksheet('Bank transfer', { views: [{ state: 'frozen', ySplit: 3 }] });
   title(bank, 'Bank transfer', `${sub} · upload via net banking (adapt columns to your bank's bulk template)`, 8);
   bank.getRow(3).values = ['Sr', 'Emp code', 'Beneficiary name', 'Account number', 'IFSC', 'Bank', 'Amount', 'Narration'];
   [5, 11, 26, 20, 13, 18, 14, 26].forEach((w, i) => (bank.getColumn(i + 1).width = w));
   header(bank, 3);
-  const payable = o.rows.filter((r) => !r.hold && r.bank && r.payslip.net > 0);
+  const payable = o.rows.filter((r) => r.bank && r.payslip.net > 0);
   payable.forEach((r, i) => {
     const row = bank.addRow([i + 1, r.code, r.bank!.holder, r.bank!.account, r.bank!.ifsc, r.bank!.bankName ?? '', r.payslip.net, `Salary ${o.label}`]);
     row.getCell(4).numFmt = '@'; // keep leading zeros in account numbers
@@ -103,7 +102,7 @@ export async function buildSalaryWorkbook(o: { company: string; month: string; l
   if (skipped.length) {
     const at = 6 + payable.length;
     bank.getCell(at, 1).value = 'Not in this file:'; bank.getCell(at, 1).font = { bold: true, color: { argb: 'FFB45309' } };
-    skipped.forEach((r, i) => { bank.getCell(at + 1 + i, 2).value = r.code; bank.getCell(at + 1 + i, 3).value = `${r.name} — ${r.hold ? 'salary on hold' : !r.bank ? 'bank details missing' : 'net pay is zero'}`; });
+    skipped.forEach((r, i) => { bank.getCell(at + 1 + i, 2).value = r.code; bank.getCell(at + 1 + i, 3).value = `${r.name} — ${!r.bank ? 'bank details missing' : 'net pay is zero'}`; });
   }
 
   /* ---- Statutory summary ---- */
@@ -138,7 +137,7 @@ export async function buildSalaryWorkbook(o: { company: string; month: string; l
   title(sm, `Payroll summary — ${o.label}`, sub, 2);
   sm.getColumn(1).width = 34; sm.getColumn(2).width = 18;
   const S: [string, number | string][] = [
-    ['Employees paid', o.rows.length], ['Salaries on hold', o.rows.filter((r) => r.hold).length],
+    ['Employees paid', o.rows.length],
     ['Gross earnings', sum((p) => p.gross)], ['Total deductions', sum((p) => p.deductions.total)],
     ['Net pay (all)', sum((p) => p.net)], ['Net pay in bank file', payable.reduce((a, r) => a + r.payslip.net, 0)],
     ['Employer contributions', sum((p) => p.employer.total)], ['Total cost to company', sum((p) => p.gross + p.employer.total)],
@@ -147,7 +146,7 @@ export async function buildSalaryWorkbook(o: { company: string; month: string; l
   S.forEach(([k, v], i) => {
     const row = sm.getRow(4 + i); row.getCell(1).value = k; row.getCell(2).value = v;
     row.getCell(1).font = { bold: true };
-    if (typeof v === 'number' && i >= 2 && i <= 7) row.getCell(2).numFmt = INR;
+    if (typeof v === 'number' && i >= 1 && i <= 6) row.getCell(2).numFmt = INR;
   });
   sm.getCell('A17').value = 'Assumed YTD: earlier months of this financial year were not paid through PayrollPro, so TDS assumes they were paid at the current salary. Import opening YTD for exact TDS.'; sm.mergeCells('A17:B18'); sm.getCell('A17').alignment = { wrapText: true, vertical: 'top' }; sm.getCell('A17').font = { italic: true, color: { argb: 'FF6B7280' } };
   sm.mergeCells('A16:B16'); sm.getCell('A16').alignment = { wrapText: true, vertical: 'top' }; sm.getRow(16).height = 30;

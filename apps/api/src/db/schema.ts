@@ -92,6 +92,7 @@ export const employees = pgTable('employee', {
   bankEnc: text('bank_enc'), bankLast4: str('bank_last4'),
   aadhaarLast4: str('aadhaar_last4'), uan: str('uan'), esiIp: str('esi_ip'),
   pfOptOut: boolean('pf_opt_out').notNull().default(false),
+  ptExempt: boolean('pt_exempt').notNull().default(false),
   international: boolean('international').notNull().default(false),
   taxRegime: str('tax_regime').notNull().default('new'),
   metro: boolean('metro').notNull().default(false),
@@ -251,6 +252,7 @@ export const payrollInputs = pgTable('payroll_input', {
   employeeId: uuid('employee_id').notNull().references(() => employees.id),
   lopDays: numeric('lop_days', { precision: 5, scale: 1 }).notNull().default('0'),
   bonus: money('bonus').notNull().default('0'),
+  arrears: money('arrears').notNull().default('0'),
   otherEarnings: money('other_earnings').notNull().default('0'),
   otherDeductions: money('other_deductions').notNull().default('0'),
   hold: boolean('hold').notNull().default(false),
@@ -327,6 +329,7 @@ export const consultantPayments = pgTable('consultant_payment', {
   daysInMonth: integer('days_in_month').notNull(),
   lopDays: numeric('lop_days', { precision: 5, scale: 1 }).notNull().default('0'),
   adjustment: money('adjustment').notNull().default('0'), // one-off additions (+) or recoveries (−)
+  amountOverride: money('amount_override'), tdsOverride: money('tds_override'), // typed in by the admin; win over the calculation
   amount: money('amount'), tds: money('tds'), net: money('net'),
   note: text('note'),
   ...stamps,

@@ -76,11 +76,12 @@ function MonthlyPayment() {
   const qc = useQueryClient();
   const [month, setMonth] = useState(lastMonth);
   const { data, isLoading } = useQuery<any>({ queryKey: ['consultant-run', month], queryFn: () => get(`/consultant-runs/${month}`) });
-  const [inp, setInp] = useState<Record<string, { lopDays: number; adjustment: number }>>({});
+  type In = { lopDays: number; adjustment: number; amountOverride: number | null; tdsOverride: number | null };
+  const [inp, setInp] = useState<Record<string, In>>({});
   const [busy, setBusy] = useState<string | null>(null);
   useEffect(() => setInp({}), [month, data?.run?.calculatedAt]);
   const run = data?.run, locked = run?.status === 'FINALISED';
-  const val = (i: any) => inp[i.id] ?? { lopDays: i.lopDays, adjustment: i.adjustment };
+  const val = (i: any): In => inp[i.id] ?? { lopDays: i.lopDays, adjustment: i.adjustment, amountOverride: i.amountOverride, tdsOverride: i.tdsOverride };
   const dirty = Object.keys(inp).length > 0;
   const refresh = () => qc.invalidateQueries({ queryKey: ['consultant-run', month] });
 
@@ -112,6 +113,22 @@ function MonthlyPayment() {
       onChange={(e) => setInp({ ...inp, [i.id]: { ...val(i), [k]: Number(e.target.value) || 0 } })}
       className={clsx('!px-2 !py-1.5 w-24 text-right', inp[i.id] && 'border-brand/60 bg-brand-soft/40')} />
   );
+  // Amount and TDS can be typed over; a typed value wins over the calculation until it is cleared.
+  const over = (i: any, k: 'amountOverride' | 'tdsOverride', calc: number | null) => {
+    const v = val(i)[k];
+    return (
+      <div className="flex items-center justify-end gap-1">
+        <Input type="number" min={0} step={1} disabled={locked} value={v ?? calc ?? ''} placeholder="—"
+          onChange={(e) => setInp({ ...inp, [i.id]: { ...val(i), [k]: e.target.value === '' ? null : Math.max(0, Number(e.target.value) || 0) } })}
+          className={clsx('!px-2 !py-1.5 w-28 text-right', v != null && 'border-warn/60 bg-warn/10')} title={v != null ? 'Entered manually' : 'Calculated'} />
+        {v != null && !locked && <button className="text-xs text-muted hover:text-ink" title="Back to calculated" onClick={() => setInp({ ...inp, [i.id]: { ...val(i), [k]: null } })}>↺</button>}
+      </div>
+    );
+  };
+  const netOf = (i: any) => {
+    const v = val(i), a = v.amountOverride ?? i.amount, t = v.tdsOverride ?? i.tds;
+    return a == null ? null : a - Math.min(t ?? 0, a);
+  };
   return (
     <>
       <Card hover={false} className="mb-5 flex flex-wrap items-center justify-between gap-3 py-3" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -147,9 +164,9 @@ function MonthlyPayment() {
               { h: 'Days', className: 'text-center', cell: (i: any) => <span>{i.engagedDays}/{data.daysInMonth}</span>, hideOnMobile: true },
               { h: 'LOP days', cell: (i: any) => num(i, 'lopDays', 0.5) },
               { h: 'Adjustment ₹', cell: (i: any) => num(i, 'adjustment', 1), hideOnMobile: true },
-              { h: 'Amount', className: 'text-right', cell: (i: any) => <span className="tabular-nums">{i.amount != null ? inr(i.amount) : '—'}</span> },
-              { h: 'TDS', className: 'text-right', cell: (i: any) => <span className="tabular-nums text-bad">{i.tds != null ? inr(i.tds) : '—'}</span> },
-              { h: 'Net payable', className: 'text-right', cell: (i: any) => <b className="tabular-nums text-ok">{i.net != null ? inr(i.net) : '—'}</b> },
+              { h: 'Amount ₹', className: 'text-right', cell: (i: any) => over(i, 'amountOverride', i.amount) },
+              { h: 'TDS ₹', className: 'text-right', cell: (i: any) => over(i, 'tdsOverride', i.tds) },
+              { h: 'Net payable', className: 'text-right', cell: (i: any) => <b className="tabular-nums text-ok">{netOf(i) != null ? inr(netOf(i)!) : '—'}</b> },
             ]} />)}
         {dirty && <p className="p-3 text-xs text-brand">Changes not calculated yet — click {run ? 'Recalculate' : 'Calculate'}.</p>}
       </Card>

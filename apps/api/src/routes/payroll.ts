@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { db, insertReturning, schema, updateReturning } from '../db';
 import { audit } from '../lib/audit';
 import { hasRole, requireRole } from '../lib/auth';
-import { decryptJson } from '../lib/crypto';
+import { decrypt, decryptJson } from '../lib/crypto';
 import { buildSalaryWorkbook } from '../lib/excel';
 import { ApiError, forbidden, h, notFound, parse } from '../lib/http';
 import { loadRules } from '../lib/rules';
@@ -122,8 +122,8 @@ payrollRouter.get('/payroll-runs/:id', requireRole(...ADMIN), h(async (req, res)
       employeeId: r.employeeId, code: r.code, name: r.name, department: r.department, status: r.status, hasPan: r.hasPan, hasBank: r.hasBank,
       joinedThisMonth: r.doj >= first, leavingThisMonth: !!r.lastWorkingDay && r.lastWorkingDay <= last,
       attendance: a ? { workingDays: Number(a.workingDays), presentDays: Number(a.presentDays), paidLeaveDays: Number(a.paidLeaveDays), lopDays: Number(a.lopDays) } : null,
-      inputs: { lopDays: a ? Number(a.lopDays) : Number(r.input.lopDays), bonus: Number(r.input.bonus), otherEarnings: Number(r.input.otherEarnings), otherDeductions: Number(r.input.otherDeductions), hold: r.input.hold, note: r.input.note },
-      payslip: r.slip?.id ? { id: r.slip.id, gross: Number(r.slip.gross), net: Number(r.slip.net), tds: Number(r.slip.tds), deductions: Number(r.slip.totalDeductions), employerCost: Number(r.slip.employerCost), payableDays: Number(r.slip.payableDays), deductionSplit: d?.deductions, notes: d?.notes ?? [] } : null,
+      inputs: { lopDays: a ? Number(a.lopDays) : Number(r.input.lopDays), bonus: Number(r.input.bonus), arrears: Number(r.input.arrears), otherEarnings: Number(r.input.otherEarnings), otherDeductions: Number(r.input.otherDeductions), hold: r.input.hold, note: r.input.note },
+      payslip: r.slip?.id ? { id: r.slip.id, gross: Number(r.slip.gross), net: Number(r.slip.net), tds: Number(r.slip.tds), deductions: Number(r.slip.totalDeductions), employerCost: Number(r.slip.employerCost), payableDays: Number(r.slip.payableDays), deductionSplit: d?.deductions, adjustments: d?.adjustments ?? { bonus: 0, arrears: 0, other: 0 }, intern: !!(d as any)?.intern, notes: d?.notes ?? [] } : null,
       variance: variance === null ? null : Math.round(variance * 10) / 10,
     };
   });
@@ -146,11 +146,11 @@ payrollRouter.put('/payroll-runs/:id/inputs', requireRole(...ADMIN), h(async (re
   const dim = daysInMonth(run.month);
   const money = z.number().min(0).max(1e8);
   const { items } = parse(z.object({ items: z.array(z.object({
-    employeeId: z.string().uuid(), lopDays: z.number().min(0).max(dim).multipleOf(0.1), bonus: money, otherEarnings: money, otherDeductions: money, hold: z.boolean(), note: z.string().max(200).nullish(),
+    employeeId: z.string().uuid(), lopDays: z.number().min(0).max(dim).multipleOf(0.1), bonus: money, arrears: money.default(0), otherEarnings: money, otherDeductions: money, hold: z.boolean(), note: z.string().max(200).nullish(),
   })).min(1).max(5000) }), req.body);
   await db.transaction(async (tx) => {
     for (const it of items) {
-      await tx.update(I).set({ lopDays: String(it.lopDays), bonus: String(it.bonus), otherEarnings: String(it.otherEarnings), otherDeductions: String(it.otherDeductions), hold: it.hold, note: it.note ?? null })
+      await tx.update(I).set({ lopDays: String(it.lopDays), bonus: String(it.bonus), arrears: String(it.arrears), otherEarnings: String(it.otherEarnings), otherDeductions: String(it.otherDeductions), hold: it.hold, note: it.note ?? null })
         .where(and(eq(I.runId, run.id), eq(I.employeeId, it.employeeId), eq(I.companyId, req.user!.cid)));
     }
     await tx.update(R).set({ status: 'DRAFT' }).where(eq(R.id, run.id)); // inputs changed → must recalculate
@@ -193,11 +193,12 @@ payrollRouter.post('/payroll-runs/:id/calculate', requireRole(...ADMIN), h(async
         month: run.month, components: breakup.components, deemedWages: Number(s.deemedWages),
         employee: {
           gender: e.gender === 'F' ? 'F' : 'M', state: br?.state ?? 'MH', age, doj: e.doj, lastWorkingDay: e.lastWorkingDay, pfCapMode: s.pfCapMode as 'capped' | 'actual',
-          pfOptOut: e.pfOptOut, internationalWorker: e.international, esiExempt: !company.esiEnabled, regime: e.taxRegime as 'new' | 'old', ageBand: age >= 80 ? '80plus' : age >= 60 ? '60to79' : 'below60',
+          pfOptOut: e.pfOptOut, ptExempt: e.ptExempt, internationalWorker: e.international, esiExempt: !company.esiEnabled, regime: e.taxRegime as 'new' | 'old', ageBand: age >= 80 ? '80plus' : age >= 60 ? '60to79' : 'below60',
           metro: e.metro || !!br?.metro, hasPan: !!e.panEnc,
         },
         payableDaysMethod: company.payableDaysMethod as 'calendar' | 'fixed30' | 'working',
-        lopDays: Number(att.get(e.id)?.lopDays ?? inp.lopDays), bonus: Number(inp.bonus), otherEarnings: Number(inp.otherEarnings), otherDeductions: Number(inp.otherDeductions),
+        lopDays: Number(att.get(e.id)?.lopDays ?? inp.lopDays), bonus: Number(inp.bonus), arrears: Number(inp.arrears), otherEarnings: Number(inp.otherEarnings), otherDeductions: Number(inp.otherDeductions),
+        intern: e.employmentType === 'intern',
         ytd: ytd.get(e.id) ?? undefined,
       }, stat, tax);
       slips.push({
@@ -242,17 +243,18 @@ payrollRouter.get('/payroll-runs/:id/export.xlsx', requireRole(...ADMIN), h(asyn
   if (run.status !== 'FINALISED') throw new ApiError(409, 'not_approved', 'Approve the salaries first; the salary sheet is generated from the approved run');
   const [company] = await db.select().from(schema.companies).where(eq(schema.companies.id, req.user!.cid));
   const rows = await db.select({
-    slip: P, code: E.code, firstName: E.firstName, lastName: E.lastName, panLast4: E.panLast4, uan: E.uan, bankEnc: E.bankEnc,
+    slip: P, code: E.code, firstName: E.firstName, lastName: E.lastName, panEnc: E.panEnc, uan: E.uan, bankEnc: E.bankEnc,
     department: schema.departments.name, designation: schema.designations.name, state: schema.branches.state,
   }).from(P).innerJoin(E, eq(E.id, P.employeeId)).leftJoin(schema.departments, eq(schema.departments.id, E.departmentId))
     .leftJoin(schema.designations, eq(schema.designations.id, E.designationId)).leftJoin(schema.branches, eq(schema.branches.id, E.branchId))
-    .where(eq(P.runId, run.id)).orderBy(asc(E.code));
+    // Held salaries are left out of the sheet altogether.
+    .where(and(eq(P.runId, run.id), eq(P.hold, false))).orderBy(asc(E.code));
   const att = await attendanceFor(req.user!.cid, run.month);
   const wb = await buildSalaryWorkbook({
     company: company.legalName ?? company.name, month: run.month, label: monthLabel(run.month), status: run.status,
     rows: rows.map((r) => ({
       code: r.code, name: `${r.firstName} ${r.lastName}`, department: r.department ?? '', designation: r.designation ?? '', state: r.state ?? '',
-      panLast4: r.panLast4, uan: r.uan, hold: r.slip.hold, payslip: r.slip.detail as Payslip,
+      pan: r.panEnc ? decrypt(r.panEnc) : null, uan: r.uan, payslip: r.slip.detail as Payslip,
       attendance: (() => { const a = att.get(r.slip.employeeId); return a ? { working: Number(a.workingDays), present: Number(a.presentDays), paidLeave: Number(a.paidLeaveDays), overtime: Number(a.overtimeHours) } : null; })(),
       bank: r.bankEnc ? decryptJson<{ holder: string; account: string; ifsc: string; bankName?: string }>(r.bankEnc) : null,
     })),

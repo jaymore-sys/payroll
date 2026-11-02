@@ -27,7 +27,7 @@ beforeAll(async () => {
 afterAll(() => closeDb());
 
 describe('payroll run → Excel', () => {
-  let runId = '';
+  let runId = '', heldName = '';
   it('creates a run with every employee who has a salary', async () => {
     const r = await as('payroll').post('/payroll-runs', { month });
     expect(r.status).toBe(201);
@@ -43,9 +43,20 @@ describe('payroll run → Excel', () => {
     expect((await as('other').post(`/payroll-runs/${runId}/calculate`)).status).toBe(404);
   });
   it('applies LOP and bonus inputs, then calculates net = gross − deductions', async () => {
+    await as('payroll').post(`/payroll-runs/${runId}/calculate`);
     const d = await as('payroll').get(`/payroll-runs/${runId}`);
-    const target = d.body.items[1];
-    await as('payroll').put(`/payroll-runs/${runId}/inputs`, { items: [{ employeeId: target.employeeId, lopDays: 2, bonus: 5000, otherEarnings: 0, otherDeductions: 1000, hold: false }] });
+    const target = d.body.items[1], held = d.body.items[2];
+    const before = d.body.items.find((x: { employeeId: string }) => x.employeeId === target.employeeId).payslip;
+    // Bonus / arrears / deduction move net pay only — TDS and PT unchanged (LOP-free comparison first).
+    await as('payroll').put(`/payroll-runs/${runId}/inputs`, { items: [{ employeeId: target.employeeId, lopDays: 0, bonus: 5000, arrears: 2500, otherEarnings: 0, otherDeductions: 1000, hold: false }] });
+    await as('payroll').post(`/payroll-runs/${runId}/calculate`);
+    const mid = (await as('payroll').get(`/payroll-runs/${runId}`)).body.items.find((x: { employeeId: string }) => x.employeeId === target.employeeId).payslip;
+    expect(mid.tds).toBe(before.tds);
+    expect(mid.deductionSplit.pt).toBe(before.deductionSplit.pt);
+    expect(mid.net - before.net).toBe(5000 + 2500 - 1000);
+    expect(mid.adjustments).toEqual({ bonus: 5000, arrears: 2500, other: 0 });
+    heldName = held.name;
+    await as('payroll').put(`/payroll-runs/${runId}/inputs`, { items: [{ employeeId: target.employeeId, lopDays: 2, bonus: 5000, arrears: 2500, otherEarnings: 0, otherDeductions: 1000, hold: false }, { ...held.inputs, employeeId: held.employeeId, hold: true }] });
     const c = await as('payroll').post(`/payroll-runs/${runId}/calculate`);
     expect(c.status).toBe(200);
     expect(c.body.errors).toEqual([]);
@@ -72,8 +83,34 @@ describe('payroll run → Excel', () => {
     expect(wb.worksheets.map((w) => w.name)).toEqual(['Summary', 'Salary register', 'Bank transfer', 'Statutory']);
     const bank = wb.getWorksheet('Bank transfer')!;
     expect(String(bank.getCell('D4').value)).toMatch(/^\d{6,18}$/); // full account number for the bank upload
+    // Held salaries are left out of every sheet; PAN is shown in full.
+    const all = wb.worksheets.flatMap((w) => { const v: string[] = []; w.eachRow((row) => row.eachCell((cell) => v.push(String(cell.value)))); return v; }).join('|');
+    expect(heldName).not.toBe('');
+    expect(all).not.toContain(heldName);
+    const reg = wb.getWorksheet('Salary register')!;
+    const panCol = (reg.getRow(3).values as string[]).indexOf('PAN');
+    const pans: string[] = []; reg.eachRow((row, n) => { if (n > 3 && row.getCell(panCol).value) pans.push(String(row.getCell(panCol).value)); });
+    expect(pans.some((p) => /^[A-Z]{5}\d{4}[A-Z]$/.test(p))).toBe(true);
+    expect(pans.some((p) => p.startsWith('XXXX'))).toBe(false);
     const log = await as('admin').get(`/audit?action=export_salary_sheet`);
     expect(log.body.total).toBe(1);
+  });
+  it('every report loads and downloads; employees cannot open them', async () => {
+    const list = await as('payroll').get('/reports');
+    expect(list.body.length).toBeGreaterThanOrEqual(15);
+    for (const d of list.body) {
+      const r = await as('payroll').get(`/reports/${d.key}?month=${month}`);
+      expect(r.status, d.key).toBe(200);
+      expect(Array.isArray(r.body.columns) && Array.isArray(r.body.rows), d.key).toBe(true);
+    }
+    const sr = await as('payroll').get(`/reports/salary-register?month=${month}`);
+    expect(sr.body.rows.some((x: { name: string }) => x.name === heldName)).toBe(false);
+    expect((await as('payroll').get(`/reports/salary-register?month=${month}&showSkipped=1`)).body.rows.some((x: { name: string }) => x.name === heldName)).toBe(true);
+    expect((await as('payroll').get(`/reports/skipped-summary?month=${month}`)).body.rows.map((x: { name: string }) => x.name)).toEqual([heldName]);
+    const x = await as('payroll').get(`/reports/provident-fund?month=${month}&format=xlsx`);
+    expect(x.status).toBe(200);
+    expect(x.headers['content-type']).toMatch(/spreadsheet/);
+    expect((await as('employee').get('/reports/hr-register')).status).toBe(403);
   });
   it('after approval employees see their own payslip and nobody else’s', async () => {
     const mine = await as('employee').get('/payslips');

@@ -40,7 +40,7 @@ export default function PayslipPrint() {
   const info: [string, string | number | null][] = [
     ['Employee Code', e.code], ['Name', `${e.firstName} ${e.lastName}`], ['Designation', e.designation], ['Date of birth', e.dob ? date(e.dob) : null],
     ['PAN', e.panLast4 ? `XXXXXX${e.panLast4}` : null], ['UAN', e.uan], ['Account no.', e.bankLast4 ? `XXXXXX${e.bankLast4}` : null], ['IFSC code', e.ifsc],
-    ['Date of joining', date(e.doj)], ['Payable Days', p.payableDays], ['LOP Days', p.lopDays || null], ['Regime Opted', p.tax.regime === 'old' ? 'Old Regime' : 'New Regime'],
+    ['Date of joining', date(e.doj)], ['Payable Days', p.payableDays], ['LOP Days', p.lopDays || null], p.intern ? ['Type', 'Intern'] : ['Regime Opted', p.tax.regime === 'old' ? 'Old Regime' : 'New Regime'],
   ];
   const Table = ({ head, rows, total, totalLabel, note }: { head: string; rows: [string, number, number][]; total: number; totalLabel: string; note?: string }) => (
     <div>
@@ -62,8 +62,8 @@ export default function PayslipPrint() {
       <div className="mt-5 flex items-end gap-6 rounded-lg bg-slate-50 px-5 py-4">
         <div><p className="text-xs text-slate-500">Net Pay</p><p className="text-3xl font-extrabold">{amt(p.net)}</p></div>
         <span className="pb-1 text-xl text-slate-400">=</span>
-        <div><p className="text-xs text-slate-500">Gross Pay (A)</p><p className="text-lg font-bold">+ {amt(p.gross)}</p></div>
-        <div><p className="text-xs text-slate-500">Deductions (B)</p><p className="text-lg font-bold">− {amt(p.deductions.total)}</p></div>
+        <div><p className="text-xs text-slate-500">{p.intern ? 'Stipend' : 'Gross Pay (A)'}</p><p className="text-lg font-bold">+ {amt(p.gross)}</p></div>
+        {(!p.intern || p.deductions.total > 0) && <div><p className="text-xs text-slate-500">Deductions (B)</p><p className="text-lg font-bold">− {amt(p.deductions.total)}</p></div>}
       </div>
       <div className="mt-5 grid grid-cols-[190px_1fr] gap-6">
         <dl className="space-y-2.5 border-r border-slate-200 pr-4">{info.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => <div key={k}><dt className="text-[11px] text-slate-500">{k}</dt><dd className="font-semibold">{v}</dd></div>)}</dl>
@@ -72,8 +72,8 @@ export default function PayslipPrint() {
             <Table head="Earnings" totalLabel={lopAmount > 0 ? 'Gross Pay *' : 'Gross Pay'} total={p.gross}
               rows={[...earnings.map((x) => [x.name, x.full, x.amount] as [string, number, number]), ...extras.map((l: any) => [l.label, l.amount, l.amount] as [string, number, number])]}
               note={lopAmount > 0 ? `* Loss of pay amount deducted from actual gross pay is ${amt(lopAmount)}` : undefined} /></div>
-          <div><p className="mb-1 font-bold">Deductions (B) <span className="font-normal text-slate-500">The amount deducted for taxes and other benefits</span></p>
-            <Table head="Deductions" totalLabel="Total Deductions" total={p.deductions.total} rows={ded.map((l: any) => [l.label === 'Provident fund' ? 'Employee PF Contribution' : l.label, l.amount, l.amount])} /></div>
+          {(!p.intern || p.deductions.total > 0) && <div><p className="mb-1 font-bold">Deductions (B) <span className="font-normal text-slate-500">The amount deducted for taxes and other benefits</span></p>
+            <Table head="Deductions" totalLabel="Total Deductions" total={p.deductions.total} rows={ded.map((l: any) => [l.label === 'Provident fund' ? 'Employee PF Contribution' : l.label, l.amount, l.amount])} /></div>}
           <p className="text-slate-600">Net pay in words: <b>Rupees {inWords(p.net)} Only</b></p>
         </div>
       </div>

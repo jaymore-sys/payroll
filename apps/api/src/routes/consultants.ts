@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { db, insertReturning, schema, updateReturning } from '../db';
 import { audit } from '../lib/audit';
 import { requireRole } from '../lib/auth';
-import { decryptJson, encrypt, encryptJson } from '../lib/crypto';
+import { decrypt, decryptJson, encrypt, encryptJson } from '../lib/crypto';
 import { ApiError, h, notFound, parse } from '../lib/http';
 import { rowsFromXlsx } from './attendance';
 
@@ -84,6 +84,7 @@ consultantsRouter.get('/consultant-runs/:month', requireRole(...ADMIN), h(async 
     items: list.map((c) => {
       const p = pays.get(c.id);
       return { ...show(c), engagedDays: engagedDays(c, month), lopDays: p ? Number(p.lopDays) : 0, adjustment: p ? Number(p.adjustment) : 0, note: p?.note ?? null,
+        amountOverride: p?.amountOverride != null ? Number(p.amountOverride) : null, tdsOverride: p?.tdsOverride != null ? Number(p.tdsOverride) : null,
         amount: p?.amount != null ? Number(p.amount) : null, tds: p?.tds != null ? Number(p.tds) : null, net: p?.net != null ? Number(p.net) : null };
     }),
   });
@@ -109,7 +110,8 @@ consultantsRouter.post('/consultant-runs/:month/import', requireRole(...ADMIN), 
 
 consultantsRouter.post('/consultant-runs/:month/calculate', requireRole(...ADMIN), h(async (req, res) => {
   const month = parse(MONTH, req.params.month), cid = req.user!.cid;
-  const { items } = parse(z.object({ items: z.array(z.object({ consultantId: z.string().uuid(), lopDays: z.number().min(0).max(31).multipleOf(0.1), adjustment: z.number().min(-1e8).max(1e8).default(0), note: z.string().max(200).nullish() })).max(2000) }), req.body);
+  const { items } = parse(z.object({ items: z.array(z.object({ consultantId: z.string().uuid(), lopDays: z.number().min(0).max(31).multipleOf(0.1), adjustment: z.number().min(-1e8).max(1e8).default(0), note: z.string().max(200).nullish(),
+    amountOverride: z.number().min(0).max(1e9).nullish(), tdsOverride: z.number().min(0).max(1e9).nullish() })).max(2000) }), req.body);
   let run = await runFor(cid, month);
   if (run?.status === 'FINALISED') throw new ApiError(409, 'approved', 'This month is approved; reopen it to make changes');
   const list = await eligible(cid, month);
@@ -120,15 +122,17 @@ consultantsRouter.post('/consultant-runs/:month/calculate', requireRole(...ADMIN
   const ytd = new Map((await db.select({ c: P.consultantId, paid: sql<number>`sum(${P.amount})`.mapWith(Number), tds: sql<number>`sum(${P.tds})`.mapWith(Number) }).from(P).innerJoin(R, eq(R.id, P.runId))
     .where(and(eq(P.companyId, cid), eq(R.status, 'FINALISED'), gte(R.month, fyFirst), lt(R.month, month))).groupBy(P.consultantId)).map((r) => [r.c, r]));
   const rows = list.map((c) => {
-    const i = input.get(c.id) ?? { lopDays: 0, adjustment: 0, note: null };
+    const i = input.get(c.id) ?? { lopDays: 0, adjustment: 0, note: null, amountOverride: null, tdsOverride: null };
     const days = Math.max(0, engagedDays(c, month) - i.lopDays);
-    const amount = Math.max(0, Math.round((Number(c.monthlyFee) * days) / dim + i.adjustment));
+    const amount = i.amountOverride != null ? Math.round(i.amountOverride) : Math.max(0, Math.round((Number(c.monthlyFee) * days) / dim + i.adjustment));
     const rate = c.panEnc ? Number(c.tdsRate) : Math.max(Number(c.tdsRate), 0.2);
     const y = ytd.get(c.id) ?? { paid: 0, tds: 0 };
     // Below ₹50,000 for the year: no TDS. Crossing it: deduct on the whole year so far (catch-up), then on each payment.
     const base = y.paid + amount <= THRESHOLD ? 0 : !y.tds ? y.paid + amount : amount;
-    const tds = Math.round(base * rate);
-    return { companyId: cid, consultantId: c.id, fee: c.monthlyFee, daysInMonth: dim, lopDays: String(i.lopDays), adjustment: String(i.adjustment), note: i.note ?? null, amount: String(amount), tds: String(tds), net: String(amount - tds) };
+    const tds = i.tdsOverride != null ? Math.min(Math.round(i.tdsOverride), amount) : Math.round(base * rate);
+    const ov = (v?: number | null) => (v != null ? String(v) : null);
+    return { companyId: cid, consultantId: c.id, fee: c.monthlyFee, daysInMonth: dim, lopDays: String(i.lopDays), adjustment: String(i.adjustment), note: i.note ?? null,
+      amountOverride: ov(i.amountOverride), tdsOverride: ov(i.tdsOverride), amount: String(amount), tds: String(tds), net: String(amount - tds) };
   });
   const sum = (k: 'amount' | 'tds' | 'net') => rows.reduce((a, r) => a + Number(r[k]), 0);
   const totals = { consultants: rows.length, amount: sum('amount'), tds: sum('tds'), net: sum('net') };
@@ -171,7 +175,7 @@ consultantsRouter.get('/consultant-runs/:month/export.xlsx', requireRole(...ADMI
   const pay = wb.addWorksheet('Consultant payments');
   head(pay, 'Consultant payments', [['Code', 10], ['Name', 26], ['PAN', 13], ['Monthly fee', 13], ['Days', 7], ['LOP', 7], ['Adjustment', 12], ['Amount', 13], ['TDS %', 7], ['TDS', 11], ['Net payable', 13], ['Note', 28]]);
   for (const { p, c } of rows) {
-    const r = pay.addRow([c.code ?? '', c.name, c.panLast4 ? `XXXXXX${c.panLast4}` : 'MISSING', Number(p.fee), p.daysInMonth, Number(p.lopDays), Number(p.adjustment), Number(p.amount), Number(p.amount) ? Math.round((Number(p.tds) / Number(p.amount)) * 1000) / 10 : 0, Number(p.tds), Number(p.net), p.note ?? '']);
+    const r = pay.addRow([c.code ?? '', c.name, c.panEnc ? decrypt(c.panEnc) : 'MISSING', Number(p.fee), p.daysInMonth, Number(p.lopDays), Number(p.adjustment), Number(p.amount), Number(p.amount) ? Math.round((Number(p.tds) / Number(p.amount)) * 1000) / 10 : 0, Number(p.tds), Number(p.net), p.note ?? '']);
     [4, 7, 8, 10, 11].forEach((i) => (r.getCell(i).numFmt = INR));
   }
   const t = pay.addRow(['', 'Total', '', null, null, null, null, { formula: `SUM(H4:H${3 + rows.length})` }, null, { formula: `SUM(J4:J${3 + rows.length})` }, { formula: `SUM(K4:K${3 + rows.length})` }]);

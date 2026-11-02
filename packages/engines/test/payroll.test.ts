@@ -40,11 +40,27 @@ describe('computePayslip (spec §10.2)', () => {
     expect(p.periodDays).toBe(16);
     expect(Math.abs(p.gross - (s.monthlyGross * 16) / 31)).toBeLessThan(3);
   });
-  it('one-time bonus: the whole extra tax is deducted this month (spec §7.3 step 10)', () => {
+  it('bonus, arrears and deductions change net pay only — TDS, PF and PT stay the same', () => {
     const a = computePayslip(base(), SR, TR);
-    const b = computePayslip(base({ bonus: 100000 }), SR, TR);
-    expect(b.gross - a.gross).toBe(100000);
-    expect(b.deductions.tds - a.deductions.tds).toBe(b.tax.annualTax - a.tax.annualTax);
+    const b = computePayslip(base({ bonus: 100000, arrears: 5000, otherEarnings: 1000, otherDeductions: 2500 }), SR, TR);
+    expect(b.gross - a.gross).toBe(106000);
+    expect(b.deductions.tds).toBe(a.deductions.tds);
+    expect(b.deductions.pf).toBe(a.deductions.pf);
+    expect(b.deductions.pt).toBe(a.deductions.pt);
+    expect(b.net - a.net).toBe(106000 - 2500);
+    expect(b.taxableGross).toBe(a.taxableGross);
+  });
+  it('PT exempt employee pays no PT; no gratuity in employer cost', () => {
+    const p = computePayslip(base({ employee: { ...emp, ptExempt: true } }), SR, TR);
+    expect(p.deductions.pt).toBe(0);
+    expect(p.lines.some((l) => /gratuity/i.test(l.label))).toBe(false);
+  });
+  it('intern: stipend only, no deductions', () => {
+    const p = computePayslip(base({ intern: true, employee: { ...emp, hasPan: false } }), SR, TR);
+    expect(p.earnings).toHaveLength(1);
+    expect(p.earnings[0].name).toBe('Stipend');
+    expect(p.deductions.total).toBe(0);
+    expect(p.net).toBe(s.monthlyGross);
   });
   it('TDS stays level mid-year when earlier months were paid at the same salary', () => {
     const apr = computePayslip(base(), SR, TR);

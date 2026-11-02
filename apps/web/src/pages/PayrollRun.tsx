@@ -12,7 +12,7 @@ import { inr, inrShort } from '../lib/format';
 import { useAct } from '../lib/hooks';
 import { monthLabel, runLabel, runTone } from './Payroll';
 
-type Inputs = { lopDays: number; bonus: number; otherEarnings: number; otherDeductions: number; hold: boolean; note?: string | null };
+type Inputs = { lopDays: number; bonus: number; arrears: number; otherEarnings: number; otherDeductions: number; hold: boolean; note?: string | null };
 function SlipModal({ item, onClose }: { item: any; onClose: () => void }) {
   const { data } = useQuery<any>({ queryKey: ['payslip', item?.payslip?.id], queryFn: () => get(`/payslips/${item.payslip.id}`), enabled: !!item?.payslip?.id });
   const p = data?.payslip;
@@ -35,7 +35,7 @@ export function PayslipBody({ p }: { p: any }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-3 text-center">
-        {[['Payable days', `${p.payableDays} / ${p.daysInMonth}`], ['LOP days', p.lopDays], ['Regime', p.tax.regime]].map(([l, v]) => <div key={l as string} className="rounded-xl bg-surface-2 p-3"><p className="text-[11px] font-semibold uppercase text-muted">{l}</p><p className="font-bold capitalize">{v}</p></div>)}
+        {[['Payable days', `${p.payableDays} / ${p.daysInMonth}`], ['LOP days', p.lopDays], p.intern ? ['Type', 'Intern'] : ['Regime', p.tax.regime]].map(([l, v]) => <div key={l as string} className="rounded-xl bg-surface-2 p-3"><p className="text-[11px] font-semibold uppercase text-muted">{l}</p><p className="font-bold capitalize">{v}</p></div>)}
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-2xl bg-surface-2/60 p-4">
@@ -45,12 +45,12 @@ export function PayslipBody({ p }: { p: any }) {
           <div className="mt-2 flex justify-between border-t border-line pt-2 text-sm font-bold"><span>Gross pay</span><span>{inr(p.gross)}</span></div>
           {p.lopDays > 0 && <p className="mt-1 text-xs text-muted">Loss of pay deducted from actual gross: {inr(p.earnings.reduce((s: number, x: any) => s + x.full - x.amount, 0))}</p>}
         </div>
-        <Col title="Deductions" rows={sec('deduction')} total={p.deductions.total} tone="text-bad" />
+        {(!p.intern || p.deductions.total > 0) && <Col title="Deductions" rows={sec('deduction')} total={p.deductions.total} tone="text-bad" />}
       </div>
       <motion.div initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="gradient-brand flex items-center justify-between rounded-2xl p-5 text-white">
         <span className="font-semibold">Net pay</span><span className="text-3xl font-extrabold">{inr(p.net)}</span>
       </motion.div>
-      <div className="grid gap-3 md:grid-cols-2">
+      {!p.intern && <div className="grid gap-3 md:grid-cols-2">
         <Col title="Employer contributions" rows={sec('employer')} total={p.employer.total} />
         <div className="rounded-2xl bg-surface-2/60 p-4 text-sm">
           <p className="mb-2 text-xs font-bold uppercase text-muted">How TDS was calculated</p>
@@ -59,7 +59,7 @@ export function PayslipBody({ p }: { p: any }) {
           <div className="flex justify-between py-1"><span>Already deducted this year</span><b>{inr(p.tax.paidSoFar)}</b></div>
           <div className="flex justify-between border-t border-line pt-2 font-bold"><span>Deducted this month</span><span>{inr(p.tax.thisMonth)}</span></div>
         </div>
-      </div>
+      </div>}
       {p.notes?.length > 0 && <div className="rounded-xl bg-warn/10 p-3 text-sm text-warn">{p.notes.join(' · ')}</div>}
     </div>
   );
@@ -162,6 +162,14 @@ export default function PayrollRun() {
   const items = useMemo(() => (data?.items ?? []).filter((i: any) => !q || `${i.name} ${i.code} ${i.department}`.toLowerCase().includes(q.toLowerCase())), [data, q]);
   const val = (i: any): Inputs => edits[i.employeeId] ?? i.inputs;
   const set = (i: any, k: keyof Inputs, v: number | boolean) => setEdits((e) => ({ ...e, [i.employeeId]: { ...val(i), [k]: v } }));
+  // Bonus, arrears, other earnings and deductions only move net pay (TDS/PF/PT never change), so preview them live.
+  const live = (i: any) => {
+    const p = i.payslip; if (!p) return null;
+    const a = p.adjustments ?? { bonus: 0, arrears: 0, other: 0 }, v = val(i);
+    const addOld = a.bonus + a.arrears + a.other, addNew = (v.bonus || 0) + (v.arrears || 0) + (v.otherEarnings || 0);
+    const dedOld = p.deductionSplit?.other ?? 0, dedNew = v.otherDeductions || 0;
+    return { gross: p.gross - addOld + addNew, deductions: p.deductions - dedOld + dedNew, net: p.net - addOld + addNew + dedOld - dedNew, changed: addOld !== addNew || dedOld !== dedNew };
+  };
 
   const save = async () => {
     if (!dirty) return;
@@ -180,7 +188,6 @@ export default function PayrollRun() {
   };
   const approve = useAct(() => post(`/payroll-runs/${id}/approve`), { success: 'Salaries approved — download the salary sheet', invalidate: [['payroll-run', id], ['payroll-runs']], onDone: () => setView(null) });
   const reopen = useAct(() => post(`/payroll-runs/${id}/reopen`), { success: 'Run reopened for changes', invalidate: [['payroll-run', id], ['payroll-runs']] });
-  const saveOnly = useAct(save, { success: 'Inputs saved — recalculate to update pay', invalidate: [['payroll-run', id]] });
   const remove = useAct(() => del(`/payroll-runs/${id}`), { success: 'Run deleted', invalidate: [['payroll-runs']], onDone: () => nav('/payroll') });
   const excel = async () => {
     setBusy('excel');
@@ -193,7 +200,7 @@ export default function PayrollRun() {
   const t = run.totals;
   const done = run.status === 'FINALISED' ? 2 : run.status === 'CALCULATED' ? 1 : 0;
   const step = view ?? done;
-  const num = (i: any, k: 'lopDays' | 'bonus' | 'otherEarnings' | 'otherDeductions', w = 'w-[84px]', step = 1) => (
+  const num = (i: any, k: 'lopDays' | 'bonus' | 'arrears' | 'otherEarnings' | 'otherDeductions', w = 'w-[84px]', step = 1) => (
     <Input type="number" min={0} step={step} disabled={locked} value={val(i)[k] || ''} placeholder="0" onClick={(e) => e.stopPropagation()}
       onChange={(e) => set(i, k, Math.max(0, Number(e.target.value) || 0))} className={clsx('!px-2 !py-1.5 text-right', w, edits[i.employeeId] && 'border-brand/60 bg-brand-soft/40')} />
   );
@@ -208,8 +215,8 @@ export default function PayrollRun() {
         </div>
         <div className="flex flex-wrap gap-2">
           {can('COMPANY_ADMIN') && !locked && <Button variant="ghost" icon={<Trash2 className="h-4 w-4" />} onClick={() => window.confirm('Delete this payroll run?') && remove.mutate()}>Delete</Button>}
-          {step === 1 && !locked && dirty > 0 && <Button variant="secondary" icon={<Save className="h-4 w-4" />} loading={saveOnly.isPending} onClick={() => saveOnly.mutate()}>Save {dirty} change{dirty > 1 ? 's' : ''}</Button>}
-          {step === 1 && !locked && <Button variant="secondary" icon={<Calculator className="h-4 w-4" />} loading={busy === 'calc'} onClick={calculate}>Recalculate</Button>}
+          {step === 1 && !locked && dirty > 0 && <Button icon={<Save className="h-4 w-4" />} loading={busy === 'calc'} onClick={calculate}>Save {dirty} change{dirty > 1 ? 's' : ''}</Button>}
+          {step === 1 && !locked && !dirty && <Button variant="secondary" icon={<Calculator className="h-4 w-4" />} loading={busy === 'calc'} onClick={calculate}>Recalculate</Button>}
           {step === 1 && run.status === 'CALCULATED' && !dirty && can('COMPANY_ADMIN') && <Button variant="success" icon={<BadgeCheck className="h-4 w-4" />} loading={approve.isPending} onClick={() => window.confirm(`Approve salaries for ${run.label}? Employees will see their payslips and attendance is locked.`) && approve.mutate()}>Approve salaries</Button>}
           {locked && can('COMPANY_ADMIN') && <Button variant="ghost" icon={<RotateCcw className="h-4 w-4" />} loading={reopen.isPending} onClick={() => window.confirm('Reopen this month to change it?') && reopen.mutate()}>Reopen</Button>}
         </div>
@@ -271,15 +278,16 @@ export default function PayrollRun() {
                   ? <span title={`From attendance: ${i.attendance.presentDays} present, ${i.attendance.paidLeaveDays} paid leave of ${i.attendance.workingDays} working days`} className={clsx('inline-flex items-center gap-1.5 rounded-lg bg-surface-2 px-2.5 py-1.5 text-sm font-semibold', i.attendance.lopDays > 0 && 'text-bad')}>{i.attendance.lopDays}<CalendarCheck2 className="h-3.5 w-3.5 text-ok" /></span>
                   : num(i, 'lopDays', 'w-16', 0.5) },
               { h: 'Bonus', cell: (i: any) => num(i, 'bonus') },
+              { h: 'Arrears', cell: (i: any) => num(i, 'arrears') },
               { h: 'Other earnings', cell: (i: any) => num(i, 'otherEarnings'), hideOnMobile: true },
               { h: 'Other deductions', cell: (i: any) => num(i, 'otherDeductions'), hideOnMobile: true },
               { h: 'Hold', cell: (i: any) => <button disabled={locked} onClick={(e) => { e.stopPropagation(); set(i, 'hold', !val(i).hold); }} aria-label="Toggle hold" className={clsx('rounded-lg p-1.5', val(i).hold ? 'bg-warn/15 text-warn' : 'text-muted hover:bg-surface-2')}><PauseCircle className="h-4 w-4" /></button> },
-              { h: 'Gross', className: 'text-right', cell: (i: any) => <span className="tabular-nums">{i.payslip ? inr(i.payslip.gross) : '—'}</span> },
+              { h: 'Gross', className: 'text-right', cell: (i: any) => <span className="tabular-nums">{i.payslip ? inr(live(i)!.gross) : '—'}</span> },
               { h: 'PF', className: 'text-right', cell: (i: any) => <span className="tabular-nums">{i.payslip ? inr(i.payslip.deductionSplit?.pf ?? 0) : '—'}</span>, hideOnMobile: true },
               { h: 'PT', className: 'text-right', cell: (i: any) => <span className="tabular-nums">{i.payslip ? inr(i.payslip.deductionSplit?.pt ?? 0) : '—'}</span>, hideOnMobile: true },
               { h: 'TDS', className: 'text-right', cell: (i: any) => <span className="tabular-nums">{i.payslip ? inr(i.payslip.deductionSplit?.tds ?? 0) : '—'}</span>, hideOnMobile: true },
-              { h: 'Deductions', className: 'text-right', cell: (i: any) => <span className="tabular-nums text-bad">{i.payslip ? inr(i.payslip.deductions) : '—'}</span>, hideOnMobile: true },
-              { h: 'Net pay', className: 'text-right', cell: (i: any) => <b className="tabular-nums text-ok">{i.payslip ? inr(i.payslip.net) : '—'}</b> },
+              { h: 'Deductions', className: 'text-right', cell: (i: any) => <span className="tabular-nums text-bad">{i.payslip ? inr(live(i)!.deductions) : '—'}</span>, hideOnMobile: true },
+              { h: 'Net pay', className: 'text-right', cell: (i: any) => <b className={clsx('tabular-nums text-ok', live(i)?.changed && 'rounded bg-brand-soft px-1')} title={live(i)?.changed ? 'Updated — click Save to keep' : undefined}>{i.payslip ? inr(live(i)!.net) : '—'}</b> },
               { h: 'vs last month', className: 'text-right', cell: (i: any) => i.variance === null ? <span className="text-muted">—</span> : <Badge tone={Math.abs(i.variance) > 10 ? 'amber' : 'gray'}>{i.variance > 0 ? '+' : ''}{i.variance}%</Badge>, hideOnMobile: true },
             ]} />
         </div>
