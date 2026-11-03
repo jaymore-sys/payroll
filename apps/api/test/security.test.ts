@@ -29,6 +29,21 @@ beforeAll(async () => {
 afterAll(() => closeDb());
 
 describe('authentication', () => {
+  it('new logins start with Valencia123 and must choose their own password first', async () => {
+    const c = await as('admin').post('/users', { email: 'newbie@alpha.test', roles: ['EMPLOYEE'] });
+    expect(c.body.tempPassword).toBe('Valencia123');
+    const r = await login('newbie@alpha.test', 'Valencia123');
+    expect(r.status).toBe(200);
+    const t = r.body.accessToken;
+    expect((await request(app).get('/api/v1/payslips').set('Authorization', `Bearer ${t}`)).status).toBe(403);
+    const keep = await request(app).post('/api/v1/auth/change-password').set('Authorization', `Bearer ${t}`).set('X-Requested-With', 'x').send({ current: 'Valencia123', next: 'Valencia123' });
+    expect(keep.status).toBe(400);
+    const ok = await request(app).post('/api/v1/auth/change-password').set('Authorization', `Bearer ${t}`).set('X-Requested-With', 'x').send({ current: 'Valencia123', next: 'MyOwnPass2026' });
+    expect(ok.status).toBe(204);
+    expect((await login('newbie@alpha.test', 'MyOwnPass2026')).status).toBe(200);
+    const reset = await as('admin').post(`/users/${c.body.id}/reset-password`);
+    expect(reset.body.tempPassword).toBe('Valencia123');
+  });
   it('rejects bad passwords with a generic message and locks after 5 attempts', async () => {
     for (let i = 0; i < 5; i++) {
       const r = await login('payroll@beta.test', 'wrong-password');

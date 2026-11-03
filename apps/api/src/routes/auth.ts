@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { db, schema, updateReturning } from '../db';
 import { isProd } from '../env';
 import { audit } from '../lib/audit';
-import { ACCESS_TTL_SEC, hashPassword, requireAuth, signAccess, signChallenge, verifyChallenge, verifyPassword } from '../lib/auth';
+import { ACCESS_TTL_SEC, DEFAULT_PASSWORD, hashPassword, requireAuth, signAccess, signChallenge, verifyChallenge, verifyPassword } from '../lib/auth';
 import { decrypt, encrypt, randomToken, sha256 } from '../lib/crypto';
 import { ApiError, h, parse } from '../lib/http';
 
@@ -128,6 +128,7 @@ authRouter.post('/change-password', requireAuth, h(async (req, res) => {
   const [u] = await db.select().from(U).where(eq(U.id, req.user!.sub));
   if (!(await verifyPassword(u.passwordHash, current))) throw new ApiError(400, 'invalid_password', 'Current password is wrong');
   if (next === current) throw new ApiError(400, 'same_password', 'Choose a password different from the current one');
+  if (next === DEFAULT_PASSWORD) throw new ApiError(400, 'default_password', 'Choose your own password, not the default one');
   await db.update(U).set({ passwordHash: await hashPassword(next), mustChangePassword: false, tokenVersion: sql`${U.tokenVersion} + 1` }).where(eq(U.id, u.id));
   await db.update(RT).set({ revokedAt: new Date() }).where(and(eq(RT.userId, u.id), isNull(RT.revokedAt), gt(RT.expiresAt, new Date())));
   await audit(req, 'password_changed', 'user', u.id);

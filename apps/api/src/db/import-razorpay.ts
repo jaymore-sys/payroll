@@ -15,7 +15,7 @@ import { parseArgs } from 'node:util';
 import request from 'supertest';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { app } from '../app';
-import { hashPassword, signAccess } from '../lib/auth';
+import { DEFAULT_PASSWORD, hashPassword, signAccess } from '../lib/auth';
 import { closeDb, db, insertReturning, migrateDb, schema, wipeAll } from './index';
 import { createCompany, seedRules } from './seed';
 
@@ -25,8 +25,8 @@ const { values: a } = parseArgs({ options: {
   'salaries-only': { type: 'boolean' },
 } });
 const salariesOnly = !!a['salaries-only'];
-if (!a.ctc || !a.register || !a.admin || (!salariesOnly && (!a.password || !a.yes))) {
-  console.error('Usage: npm run import:razorpay -- --ctc <Master CTC Report.xlsx> --register <HR Register.csv> --admin <email> --password <default> [--managers a@x.com,b@y.com] --yes\n--yes confirms that ALL existing company data is deleted.');
+if (!a.ctc || !a.register || !a.admin || (!salariesOnly && !a.yes)) {
+  console.error('Usage: npm run import:razorpay -- --ctc <Master CTC Report.xlsx> --register <HR Register.csv> --admin <email> [--password <default, Valencia123>] [--managers a@x.com,b@y.com] --yes\n--yes confirms that ALL existing company data is deleted.');
   process.exit(1);
 }
 const file = (p: string) => resolve(process.env.INIT_CWD ?? process.cwd(), p);
@@ -197,10 +197,10 @@ for (const r of active) {
 /* ---------- logins with the default password ---------- */
 const managers = a.managers!.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 for (const c of created) {
-  await db.insert(schema.users).values({ companyId: company.id, email: c.email, employeeId: c.id, passwordHash: await hashPassword(a.password!),
+  await db.insert(schema.users).values({ companyId: company.id, email: c.email, employeeId: c.id, passwordHash: await hashPassword(a.password ?? DEFAULT_PASSWORD),
     roles: managers.includes(c.email) ? ['EMPLOYEE', 'PAYROLL_MANAGER'] : ['EMPLOYEE'], mustChangePassword: true });
 }
-await db.update(schema.users).set({ passwordHash: await hashPassword(a.password!), mustChangePassword: true, tokenVersion: sql`${schema.users.tokenVersion} + 1` })
+await db.update(schema.users).set({ passwordHash: await hashPassword(a.password ?? DEFAULT_PASSWORD), mustChangePassword: true, tokenVersion: sql`${schema.users.tokenVersion} + 1` })
   .where(eq(schema.users.email, a.admin.toLowerCase()));
 await db.delete(schema.refreshTokens).where(inArray(schema.refreshTokens.userId, db.select({ id: schema.users.id }).from(schema.users)));
 

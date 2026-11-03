@@ -27,6 +27,8 @@ export function verifyChallenge(token: string): string {
 // Argon2id with OWASP-recommended parameters.
 const ARGON = { memoryCost: 19456, timeCost: 2, parallelism: 1 };
 export const hashPassword = (p: string) => hash(p, ARGON);
+/** Every new or reset login starts with this password and must choose its own at first sign-in. */
+export const DEFAULT_PASSWORD = 'Valencia123';
 export const verifyPassword = (hashed: string, p: string) => verify(hashed, p).catch(() => false);
 
 /** Verifies the access token AND that the user is still active with the same token version (so password change / deactivation revokes at once). */

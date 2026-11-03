@@ -5,8 +5,7 @@ import { z } from 'zod';
 import { db, insertReturning, schema } from '../db';
 import { audit } from '../lib/audit';
 import { teamIds } from '../lib/access';
-import { hashPassword, hasRole, requireRole } from '../lib/auth';
-import { randomToken } from '../lib/crypto';
+import { DEFAULT_PASSWORD, hashPassword, hasRole, requireRole } from '../lib/auth';
 import { ApiError, h, notFound, page, parse } from '../lib/http';
 import { loadRules } from '../lib/rules';
 
@@ -133,7 +132,7 @@ miscRouter.put('/notifications/:id/read', h(async (req, res) => {
 
 /* ---------- users & roles ---------- */
 const roleList = z.array(z.enum(['COMPANY_ADMIN', 'PAYROLL_MANAGER', 'REPORTING_MANAGER', 'EMPLOYEE'])).min(1);
-const tempPassword = () => `Pp-${randomToken(9)}1a`;
+const tempPassword = () => DEFAULT_PASSWORD;
 miscRouter.get('/users', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   res.json(await db.select({ id: U.id, email: U.email, roles: U.roles, active: U.active, totpEnabled: U.totpEnabled, lastLoginAt: U.lastLoginAt, lockedUntil: U.lockedUntil, employeeId: U.employeeId, name: sql<string | null>`concat(${E.firstName}, ' ', ${E.lastName})` })
     .from(U).leftJoin(E, eq(E.id, U.employeeId)).where(eq(U.companyId, req.user!.cid)).orderBy(asc(U.email)));
@@ -142,7 +141,7 @@ miscRouter.post('/users', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const d = parse(z.object({ email: z.string().email().toLowerCase(), roles: roleList, employeeId: z.string().uuid().optional() }), req.body);
   if (d.employeeId) { const [e] = await db.select({ id: E.id }).from(E).where(and(eq(E.companyId, req.user!.cid), eq(E.id, d.employeeId))); if (!e) throw notFound('Employee'); }
   const pw = tempPassword();
-  const [row] = await insertReturning(U, { companyId: req.user!.cid, email: d.email, roles: d.roles, employeeId: d.employeeId, passwordHash: await hashPassword(pw) });
+  const [row] = await insertReturning(U, { companyId: req.user!.cid, email: d.email, roles: d.roles, employeeId: d.employeeId, passwordHash: await hashPassword(pw), mustChangePassword: true });
   await audit(req, 'create', 'user', row.id, undefined, { email: d.email, roles: d.roles });
   res.status(201).json({ id: row.id, tempPassword: pw });
 }));
@@ -166,7 +165,7 @@ miscRouter.put('/users/:id/active', requireRole('COMPANY_ADMIN'), h(async (req, 
 miscRouter.post('/users/:id/reset-password', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const before = await scopedUser(req.user!.cid, req.params.id);
   const pw = tempPassword();
-  await db.update(U).set({ passwordHash: await hashPassword(pw), tokenVersion: sql`${U.tokenVersion} + 1`, failedLogins: 0, lockedUntil: null }).where(eq(U.id, before.id));
+  await db.update(U).set({ passwordHash: await hashPassword(pw), mustChangePassword: true, tokenVersion: sql`${U.tokenVersion} + 1`, failedLogins: 0, lockedUntil: null }).where(eq(U.id, before.id));
   await audit(req, 'password_reset', 'user', before.id);
   res.json({ tempPassword: pw });
 }));

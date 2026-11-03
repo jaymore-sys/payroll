@@ -5,8 +5,8 @@ import { z } from 'zod';
 import { db, insertReturning, schema, updateReturning } from '../db';
 import { audit } from '../lib/audit';
 import { employeeAccess, notifyUsersOfEmployees, teamIds, type Access } from '../lib/access';
-import { canSeePay, hashPassword, hasRole, requireRole } from '../lib/auth';
-import { decrypt, decryptJson, encrypt, encryptJson, mask, randomToken } from '../lib/crypto';
+import { canSeePay, DEFAULT_PASSWORD, hashPassword, hasRole, requireRole } from '../lib/auth';
+import { decrypt, decryptJson, encrypt, encryptJson, mask } from '../lib/crypto';
 import { needsRecalc } from '../lib/runs';
 import { ApiError, forbidden, h, notFound, page, parse } from '../lib/http';
 import { loadRules } from '../lib/rules';
@@ -196,8 +196,8 @@ employeesRouter.post('/employees', requireRole('COMPANY_ADMIN'), h(async (req, r
   await creditJoinerLeave(cid, row.id, row.doj, row.gender, req.user!.sub);
   let tempPassword: string | undefined;
   if (createLogin) {
-    tempPassword = `Pp-${randomToken(9)}1a`;
-    await db.insert(schema.users).values({ companyId: cid, email: row.workEmail, passwordHash: await hashPassword(tempPassword), roles: ['EMPLOYEE'], employeeId: row.id });
+    tempPassword = DEFAULT_PASSWORD;
+    await db.insert(schema.users).values({ companyId: cid, email: row.workEmail, passwordHash: await hashPassword(tempPassword), roles: ['EMPLOYEE'], employeeId: row.id, mustChangePassword: true });
   }
   if (monthlyGross || annualCtc || components) await createRevision(req, row.id, { monthlyGross, annualCtc, components }, 0, row.doj);
   await audit(req, 'create', 'employee', row.id, undefined, { ...row, panEnc: undefined, bankEnc: undefined });

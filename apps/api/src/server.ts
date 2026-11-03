@@ -18,4 +18,15 @@ if (isProd) {
   const password = process.env.SEED_PASSWORD ?? 'Demo@Pass123';
   if (await seed.ensureSeeded(password)) console.log(`Demo data created. Sign in as admin@demo.test with password ${password}`);
 }
-app.listen(env.PORT, () => console.log(`PayrollPro API on http://localhost:${env.PORT} (MySQL)`));
+app.listen(env.PORT, () => console.log(`Valencia Payroll API on http://localhost:${env.PORT} (MySQL)`));
+
+// Logins that have not set their own password yet use the current default password (runs in the background).
+(async () => {
+  const { db, schema } = await import('./db');
+  const { DEFAULT_PASSWORD, hashPassword, verifyPassword } = await import('./lib/auth');
+  const { eq } = await import('drizzle-orm');
+  const pending = await db.select({ id: schema.users.id, hash: schema.users.passwordHash }).from(schema.users).where(eq(schema.users.mustChangePassword, true));
+  let n = 0;
+  for (const u of pending) if (!(await verifyPassword(u.hash, DEFAULT_PASSWORD))) { await db.update(schema.users).set({ passwordHash: await hashPassword(DEFAULT_PASSWORD) }).where(eq(schema.users.id, u.id)); n++; }
+  if (n) console.log(`${n} first-time login(s) set to the default password`);
+})().catch((e) => console.warn('Default password update skipped:', (e as Error).message));
