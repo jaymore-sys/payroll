@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { BrandLogo } from '../components/BrandMark';
 import { Avatar, Badge } from '../components/ui';
 import { get, put } from '../lib/api';
 import { useAuth, type Role } from '../lib/auth';
@@ -109,10 +110,7 @@ function SideNav({ collapsed, onNavigate, animatePill = true }: { collapsed: boo
 }
 
 const Logo = ({ collapsed }: { collapsed?: boolean }) => (
-  <div className={clsx('flex items-center gap-2.5', collapsed && 'justify-center')}>
-    <motion.div whileHover={{ rotate: 12, scale: 1.05 }} className="gradient-brand grid h-9 w-9 place-items-center rounded-xl text-lg font-black text-white shadow-lift">₹</motion.div>
-    {!collapsed && <span className="text-lg font-extrabold tracking-tight">Payroll<span className="text-gradient">Pro</span></span>}
-  </div>
+  <motion.div whileHover={{ scale: 1.03 }} className={clsx('flex', collapsed && 'justify-center')}><BrandLogo collapsed={collapsed} /></motion.div>
 );
 
 function ThemeToggle() {

@@ -5,6 +5,7 @@ import { Button, Field, Input } from '../components/ui';
 import { ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { pop, stagger } from '../lib/motion';
+import { BrandLogo } from '../components/BrandMark';
 
 const features = ['PF, ESI, PT & LWF for every state', 'Both tax regimes with line-by-line worksheet', 'Leave ledger you can explain to the day', 'Encrypted PAN & bank data, full audit trail'];
 
@@ -38,8 +39,7 @@ export default function Login() {
         <div className="absolute -left-20 -top-20 h-96 w-96 animate-blob rounded-full bg-white/10 blur-3xl" />
         <div className="absolute -bottom-24 right-0 h-96 w-96 animate-blob rounded-full bg-pink-300/20 blur-3xl [animation-delay:-6s]" />
         <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="relative flex items-center gap-3">
-          <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 text-xl font-black backdrop-blur">₹</div>
-          <span className="text-xl font-extrabold">PayrollPro</span>
+          <div className="rounded-2xl bg-white/95 p-2 pr-4 shadow-lg"><BrandLogo size="lg" /></div>
         </motion.div>
         <motion.div variants={stagger(0.1, 0.2)} initial="hidden" animate="show" className="relative max-w-lg">
           <motion.p variants={pop} className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold backdrop-blur"><Sparkles className="h-3.5 w-3.5" />Tax Year 2026-27 ready</motion.p>
@@ -59,7 +59,7 @@ export default function Login() {
         <motion.form key={shake} onSubmit={submit} animate={shake ? { x: [0, -10, 10, -6, 6, 0] } : {}} transition={{ duration: 0.4 }}
           className="relative w-full max-w-sm">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', stiffness: 200, damping: 22 }}>
-            <div className="mb-8 lg:hidden"><span className="text-2xl font-extrabold">Payroll<span className="text-gradient">Pro</span></span></div>
+            <div className="mb-8 lg:hidden"><BrandLogo size="lg" /></div>
             <AnimatePresence mode="wait">
               {!challenge ? (
                 <motion.div key="pw" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} className="space-y-5">
