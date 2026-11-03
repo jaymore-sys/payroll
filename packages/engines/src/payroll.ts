@@ -87,7 +87,7 @@ export function computePayslip(i: PayslipInput, statRules: StatutoryRule[], taxR
     taxable: n(D(base.taxable).plus(recurringFull.times(assumed))), tds: base.tds,
     pf: n(D(base.pf).plus(fullPf.times(assumed))), pt: base.pt + Math.min(stat.pt.amount, 200) * assumed,
   };
-  if (assumeEarlier) notes.push(`${assumed} earlier month(s) this FY not paid through PayrollPro: assumed at current salary and TDS — import opening YTD for exact figures`);
+  if (assumeEarlier) notes.push(`${assumed} earlier month(s) this FY not paid through Valencia Payroll: assumed at current salary and TDS — import opening YTD for exact figures`);
   const prev = i.prevEmployer ?? { taxable: 0, tds: 0 };
   const wageFull = i.components.filter((c) => c.isWage).reduce((a, c) => a.plus(c.monthly), D(0));
   const hraFull = D(i.components.find((c) => c.code === 'HRA')?.monthly ?? 0);

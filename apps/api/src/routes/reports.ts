@@ -220,7 +220,7 @@ const REPORTS: Record<string, { title: string; group: string; desc: string; peri
     },
   },
   'audit': {
-    title: 'Audit Report', group: 'People', period: 'month', desc: 'Who changed what in PayrollPro during the month',
+    title: 'Audit Report', group: 'People', period: 'month', desc: 'Who changed what in Valencia Payroll during the month',
     async build({ cid, month }) {
       const A = schema.auditLog, U = schema.users;
       const next = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 1));

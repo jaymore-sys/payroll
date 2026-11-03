@@ -148,7 +148,7 @@ export async function buildSalaryWorkbook(o: { company: string; month: string; l
     row.getCell(1).font = { bold: true };
     if (typeof v === 'number' && i >= 1 && i <= 6) row.getCell(2).numFmt = INR;
   });
-  sm.getCell('A17').value = 'Assumed YTD: earlier months of this financial year were not paid through PayrollPro, so TDS assumes they were paid at the current salary. Import opening YTD for exact TDS.'; sm.mergeCells('A17:B18'); sm.getCell('A17').alignment = { wrapText: true, vertical: 'top' }; sm.getCell('A17').font = { italic: true, color: { argb: 'FF6B7280' } };
+  sm.getCell('A17').value = 'Assumed YTD: earlier months of this financial year were not paid through Valencia Payroll, so TDS assumes they were paid at the current salary. Import opening YTD for exact TDS.'; sm.mergeCells('A17:B18'); sm.getCell('A17').alignment = { wrapText: true, vertical: 'top' }; sm.getCell('A17').font = { italic: true, color: { argb: 'FF6B7280' } };
   sm.mergeCells('A16:B16'); sm.getCell('A16').alignment = { wrapText: true, vertical: 'top' }; sm.getRow(16).height = 30;
   sm.getCell('A16').value = 'Bank account numbers are confidential. Share this file only over secure channels and delete local copies after upload.';
   sm.getCell('A16').font = { italic: true, color: { argb: 'FFB91C1C' } };

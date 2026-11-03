@@ -1,5 +1,5 @@
 import { AnimatePresence } from 'framer-motion';
-import { lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import Preloader from './components/Preloader';
 import TopProgress from './components/TopProgress';
@@ -49,7 +49,11 @@ const Guard = ({ roles, children }: { roles?: Role[]; children: ReactNode }) => 
 };
 
 export default function App() {
-  const { me, ready } = useAuth();
+  const { me, ready: authReady } = useAuth();
+  // Keep the intro on screen long enough for its animation to finish (first load only).
+  const [introDone, setIntroDone] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setIntroDone(true), 2000); return () => clearTimeout(t); }, []);
+  const ready = authReady && introDone;
   const ADM: Role[] = ['COMPANY_ADMIN', 'PAYROLL_MANAGER'];
   // After sign-in, warm up every page in the background so menu clicks open instantly.
   useEffect(() => {

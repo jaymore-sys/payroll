@@ -138,7 +138,7 @@ authRouter.post('/change-password', requireAuth, h(async (req, res) => {
 authRouter.post('/2fa/setup', requireAuth, h(async (req, res) => {
   const secret = authenticator.generateSecret();
   const [u] = await updateReturning(U, { totpSecretEnc: encrypt(secret), totpEnabled: false }, eq(U.id, req.user!.sub));
-  res.json({ secret, otpauthUrl: authenticator.keyuri(u.email, 'PayrollPro', secret) });
+  res.json({ secret, otpauthUrl: authenticator.keyuri(u.email, 'Valencia Payroll', secret) });
 }));
 
 authRouter.post('/2fa/enable', requireAuth, h(async (req, res) => {
