@@ -50,9 +50,13 @@ const Guard = ({ roles, children }: { roles?: Role[]; children: ReactNode }) => 
 
 export default function App() {
   const { me, ready: authReady } = useAuth();
-  // Keep the intro on screen long enough for its animation to finish (first load only).
-  const [introDone, setIntroDone] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setIntroDone(true), 2000); return () => clearTimeout(t); }, []);
+  // Played once per browser session; later reloads go straight in (only waiting for the session check).
+  const [introDone, setIntroDone] = useState(() => { try { return sessionStorage.getItem('pp-intro') === '1'; } catch { return false; } });
+  useEffect(() => {
+    if (introDone) return;
+    const t = setTimeout(() => { setIntroDone(true); try { sessionStorage.setItem('pp-intro', '1'); } catch { /* private mode */ } }, 2000);
+    return () => clearTimeout(t);
+  }, [introDone]);
   const ready = authReady && introDone;
   const ADM: Role[] = ['COMPANY_ADMIN', 'PAYROLL_MANAGER'];
   // After sign-in, warm up every page in the background so menu clicks open instantly.

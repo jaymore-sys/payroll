@@ -5,10 +5,10 @@ import { Donut, PALETTE } from './charts';
 import { Badge, CountUp } from './ui';
 
 const Line = ({ l, v, i, tag, neg, compact }: { l: string; v: number; i: number; tag?: string; neg?: boolean; compact?: boolean }) => (
-  <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 py-2 text-sm">
+  <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 py-2 text-sm sm:gap-3">
     <span className="flex items-center gap-2">{l}{tag && <Badge tone="brand">{tag}</Badge>}</span>
-    <span className="w-24 text-right tabular-nums">{neg && v ? '−' : ''}{inr(v)}</span>
-    {!compact && <span className="w-28 text-right tabular-nums text-muted">{neg && v ? '−' : ''}{inr(v * 12)}</span>}
+    <span className="w-[5.5rem] text-right tabular-nums sm:w-24">{neg && v ? '−' : ''}{inr(v)}</span>
+    {!compact && <span className="w-24 text-right tabular-nums text-muted sm:w-28">{neg && v ? '−' : ''}{inr(v * 12)}</span>}
   </motion.div>
 );
 
@@ -41,13 +41,13 @@ export default function Breakup({ p, compact, intern }: { p: any; compact?: bool
             <p className={`mt-1 text-xl font-extrabold ${i === 1 ? 'text-ok' : ''}`}><CountUp value={v as number} format={(x) => inr(x)} duration={0.8} /></p>
           </motion.div>))}
       </div>
-      <div className={compact ? '' : 'grid gap-6 lg:grid-cols-[1fr_220px]'}>
+      <div className={compact ? '' : 'grid gap-6 lg:grid-cols-[minmax(0,1fr)_220px]'}>
         <div className="divide-y divide-line/70">
-          {!compact && <div className="grid grid-cols-[1fr_auto_auto] gap-3 pb-1 text-xs font-semibold uppercase text-muted"><span>Component</span><span className="w-24 text-right">Monthly</span><span className="w-28 text-right">Annual</span></div>}
+          {!compact && <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-2 sm:gap-3 pb-1 text-xs font-semibold uppercase text-muted"><span>Component</span><span className="w-24 text-right">Monthly</span><span className="w-24 text-right sm:w-28">Annual</span></div>}
           <div>{rows.map(([l, v, t], i) => <Line key={l} l={l} v={v} i={i} tag={t} compact={compact} />)}</div>
           <div><p className="pt-3 text-xs font-bold uppercase text-muted">Employer contributions</p>{employer.map(([l, v], i) => <Line key={l} l={l} v={v} i={i + 4} compact={compact} />)}</div>
           <div><p className="pt-3 text-xs font-bold uppercase text-muted">Employee deductions</p>{deductions.map(([l, v], i) => <Line key={l} l={l} v={v} i={i + 8} neg compact={compact} />)}</div>
-          <div className="grid grid-cols-[1fr_auto_auto] gap-3 py-3 text-sm font-bold"><span>Cost to company</span><span className="w-24 text-right">{inr(p.checkCtc / 12)}</span>{!compact && <span className="w-28 text-right">{inr(p.checkCtc)}</span>}</div>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-2 sm:gap-3 py-3 text-sm font-bold"><span>Cost to company</span><span className="w-24 text-right">{inr(p.checkCtc / 12)}</span>{!compact && <span className="w-24 text-right sm:w-28">{inr(p.checkCtc)}</span>}</div>
         </div>
         {!compact && (
           <div>

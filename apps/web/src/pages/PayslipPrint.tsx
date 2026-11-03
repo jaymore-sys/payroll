@@ -53,20 +53,20 @@ export default function PayslipPrint() {
     </div>
   );
   return (
-    <div className="mx-auto max-w-[820px] bg-white p-8 text-[13px] text-slate-900 print:p-0">
+    <div className="mx-auto max-w-[820px] bg-white p-4 text-[13px] text-slate-900 sm:p-8 print:p-0">
       <style>{'@page { size: A4; margin: 12mm } body { background: white !important } html { color-scheme: light }'}</style>
       <div className="flex items-start justify-between">
         <div><p className="text-xl font-extrabold uppercase">{data.company.name}</p>{data.company.address && <p className="text-slate-500">{data.company.address}</p>}</div>
         <p className="font-semibold text-slate-600">Payslip: {new Date(`${data.month}-01T00:00`).toLocaleString('en-IN', { month: 'short', year: 'numeric' })}</p>
       </div>
-      <div className="mt-5 flex items-end gap-6 rounded-lg bg-slate-50 px-5 py-4">
+      <div className="mt-5 flex flex-wrap items-end gap-x-6 gap-y-2 rounded-lg bg-slate-50 px-5 py-4">
         <div><p className="text-xs text-slate-500">Net Pay</p><p className="text-3xl font-extrabold">{amt(p.net)}</p></div>
         <span className="pb-1 text-xl text-slate-400">=</span>
         <div><p className="text-xs text-slate-500">{p.intern ? 'Stipend' : 'Gross Pay (A)'}</p><p className="text-lg font-bold">+ {amt(p.gross)}</p></div>
         {(!p.intern || p.deductions.total > 0) && <div><p className="text-xs text-slate-500">Deductions (B)</p><p className="text-lg font-bold">− {amt(p.deductions.total)}</p></div>}
       </div>
-      <div className="mt-5 grid grid-cols-[190px_1fr] gap-6">
-        <dl className="space-y-2.5 border-r border-slate-200 pr-4">{info.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => <div key={k}><dt className="text-[11px] text-slate-500">{k}</dt><dd className="font-semibold">{v}</dd></div>)}</dl>
+      <div className="mt-5 grid gap-6 sm:grid-cols-[190px_1fr]">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 border-slate-200 sm:block sm:space-y-2.5 sm:border-r sm:pr-4">{info.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => <div key={k}><dt className="text-[11px] text-slate-500">{k}</dt><dd className="font-semibold">{v}</dd></div>)}</dl>
         <div className="space-y-6">
           <div><p className="mb-1 font-bold">Gross Pay (A) <span className="font-normal text-slate-500">The total money you earned before the deductions</span></p>
             <Table head="Earnings" totalLabel={lopAmount > 0 ? 'Gross Pay *' : 'Gross Pay'} total={p.gross}

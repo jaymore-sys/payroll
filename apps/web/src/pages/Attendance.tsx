@@ -99,7 +99,7 @@ export default function Attendance() {
           <AnimatePresence mode="wait"><motion.span key={month} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} className="min-w-[150px] text-center text-lg font-bold">{monthLabel(month)}</motion.span></AnimatePresence>
           <Button size="sm" variant="ghost" aria-label="Next month" onClick={() => setMonth(shift(month, 1))}><ChevronRight className="h-4 w-4" /></Button>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {data?.locked ? <Badge tone="green"><Lock className="h-3 w-3" />Salaries approved — locked</Badge> : <Badge tone={entered === all.length && all.length ? 'green' : 'amber'}>{entered} of {all.length} entered</Badge>}
           {!data?.locked && editableCount > 0 && <Button size="sm" variant="secondary" icon={<CheckCheck className="h-3.5 w-3.5" />} onClick={markAllPresent}>Mark the rest fully present</Button>}
         </div>

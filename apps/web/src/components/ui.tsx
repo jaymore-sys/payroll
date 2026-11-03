@@ -16,7 +16,7 @@ export const Button = forwardRef<HTMLButtonElement, BtnProps>(({ variant = 'prim
     transition={spring}
     disabled={disabled || loading}
     className={clsx(
-      'relative inline-flex select-none items-center justify-center gap-2 overflow-hidden rounded-xl font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-55',
+      'relative inline-flex shrink-0 select-none items-center justify-center gap-2 overflow-hidden whitespace-nowrap rounded-xl font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-55',
       { sm: 'h-8 px-3 text-xs', md: 'h-10 px-4 text-sm', lg: 'h-12 px-6 text-base' }[size],
       {
         primary: 'gradient-brand text-white shadow-lift hover:brightness-110',
@@ -101,10 +101,10 @@ export function Stat({ label, value, format, icon, tone = 'brand', hint }: { lab
       <div className="flex items-start justify-between">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</p>
-          <p className="mt-2 truncate text-2xl font-extrabold text-ink sm:text-[28px]"><CountUp value={value} format={format} /></p>
+          <p className="mt-2 truncate text-xl font-extrabold text-ink sm:text-2xl xl:text-[28px]"><CountUp value={value} format={format} /></p>
           {hint && <div className="mt-1 text-xs text-muted">{hint}</div>}
         </div>
-        <motion.div whileHover={{ rotate: -8, scale: 1.08 }} className={clsx('grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white shadow-lg', bg)}>{icon}</motion.div>
+        <motion.div whileHover={{ rotate: -8, scale: 1.08 }} className={clsx('grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white shadow-lg sm:h-11 sm:w-11', bg)}>{icon}</motion.div>
       </div>
     </Card>
   );
@@ -159,8 +159,8 @@ export function Modal({ open, onClose, title, children, wide, footer }: { open: 
               <h2 id={id} className="text-base font-bold">{title}</h2>
               <motion.button whileHover={{ rotate: 90 }} transition={spring} onClick={onClose} className="rounded-lg p-1.5 text-muted hover:bg-surface-2" aria-label="Close"><X className="h-5 w-5" /></motion.button>
             </div>
-            <div className="scrollbar-thin overflow-y-auto px-5 py-5">{children}</div>
-            {footer && <div className="flex justify-end gap-2 border-t border-line px-5 py-3.5">{footer}</div>}
+            <div className="scrollbar-thin overflow-y-auto overscroll-contain px-4 py-5 sm:px-5">{children}</div>
+            {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-line px-5 py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">{footer}</div>}
           </motion.div>
         </motion.div>
       )}

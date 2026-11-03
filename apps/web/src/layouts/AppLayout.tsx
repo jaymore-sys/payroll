@@ -32,6 +32,13 @@ const NAV: Nav[] = [
   { to: '/profile', label: 'My profile', icon: <UserCircle2 className="h-[18px] w-[18px]" />, section: 'me' },
 ];
 
+/** True while the media query matches (re-evaluates on resize / rotation). */
+function useMedia(q: string) {
+  const [m, setM] = useState(() => typeof window !== 'undefined' && window.matchMedia(q).matches);
+  useEffect(() => { const mq = window.matchMedia(q); const f = () => setM(mq.matches); f(); mq.addEventListener('change', f); return () => mq.removeEventListener('change', f); }, [q]);
+  return m;
+}
+
 function useCollapsed() {
   const [c, setC] = useState(() => { try { return localStorage.getItem('pp-sidebar') === '1'; } catch { return false; } });
   const set = (v: boolean) => { setC(v); try { localStorage.setItem('pp-sidebar', v ? '1' : '0'); } catch { /* ignore */ } };
@@ -200,59 +207,65 @@ function UserMenu() {
 }
 
 export default function AppLayout() {
-  const [collapsed, setCollapsed] = useCollapsed();
+  const [userCollapsed, setCollapsed] = useCollapsed();
+  const tablet = useMedia('(min-width: 768px) and (max-width: 1023px)'); // tablets get the icon rail
+  const collapsed = userCollapsed || tablet;
   const [mobile, setMobile] = useState(false);
-  const { me } = useAuth();
+  const { me, can } = useAuth();
   const loc = useLocation();
   useEffect(() => { setMobile(false); window.scrollTo({ top: 0 }); }, [loc.pathname]);
 
   return (
     <div className="min-h-dvh">
       {/* Desktop sidebar */}
-      <motion.aside animate={{ width: collapsed ? 84 : 260 }} transition={spring} className="fixed inset-y-0 left-0 z-30 hidden flex-col border-r border-line bg-surface/80 backdrop-blur-xl lg:flex">
+      <motion.aside animate={{ width: collapsed ? 84 : 260 }} transition={spring} className="pt-safe fixed inset-y-0 left-0 z-30 hidden flex-col border-r border-line bg-surface/80 backdrop-blur-xl md:flex">
         <div className="flex h-16 items-center px-5"><Logo collapsed={collapsed} /></div>
         <div className="px-4 pb-3">{!collapsed && <div className="truncate rounded-xl bg-surface-2 px-3 py-2 text-xs font-semibold text-muted">{me?.company.name}</div>}</div>
         <SideNav collapsed={collapsed} />
-        <button onClick={() => setCollapsed(!collapsed)} className="m-3 flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-semibold text-muted hover:bg-surface-2 hover:text-ink">
+        {!tablet && <button onClick={() => setCollapsed(!collapsed)} className="m-3 flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-semibold text-muted hover:bg-surface-2 hover:text-ink">
           <motion.span animate={{ rotate: collapsed ? 180 : 0 }}><ChevronsLeft className="h-4 w-4" /></motion.span>{!collapsed && 'Collapse'}
-        </button>
+        </button>}
       </motion.aside>
 
       {/* Mobile drawer */}
       {/* Keyed direct children (not a Fragment) so AnimatePresence can finish their exit and unmount them. */}
       <AnimatePresence>
-        {mobile && <motion.div key="backdrop" className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-sm lg:hidden" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setMobile(false)} />}
+        {mobile && <motion.div key="backdrop" className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-sm md:hidden" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setMobile(false)} />}
         {mobile && (
           <motion.aside key="drawer" initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }} transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-            className="fixed inset-y-0 left-0 z-50 flex w-[82vw] max-w-[300px] flex-col bg-surface shadow-2xl lg:hidden">
+            className="pt-safe pb-safe fixed inset-y-0 left-0 z-50 flex w-[82vw] max-w-[300px] flex-col bg-surface shadow-2xl md:hidden">
             <div className="flex h-16 items-center justify-between px-5"><Logo /><button onClick={() => setMobile(false)} aria-label="Close menu" className="rounded-lg p-2 text-muted hover:bg-surface-2"><X className="h-5 w-5" /></button></div>
             <SideNav animatePill={false} collapsed={false} onNavigate={() => setMobile(false)} />
           </motion.aside>
         )}
       </AnimatePresence>
 
-      <div className="transition-[padding] duration-300 ease-out lg:pl-[var(--sb)]" style={{ ['--sb' as string]: collapsed ? '84px' : '260px' }}>
-        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-line bg-bg/75 px-4 backdrop-blur-xl sm:px-6">
-          <button onClick={() => setMobile(true)} aria-label="Open menu" className="grid h-10 w-10 place-items-center rounded-xl border border-line bg-surface lg:hidden"><Menu className="h-5 w-5" /></button>
-          <div className="lg:hidden"><Logo collapsed /></div>
+      <div className="transition-[padding] duration-300 ease-out md:pl-[var(--sb)]" style={{ ['--sb' as string]: collapsed ? '84px' : '260px' }}>
+        <header className="pt-safe sticky top-0 z-20 flex h-[calc(4rem+env(safe-area-inset-top))] items-center gap-2 border-b border-line bg-bg/75 px-3 backdrop-blur-xl sm:gap-3 sm:px-6">
+          <button onClick={() => setMobile(true)} aria-label="Open menu" className="grid h-10 w-10 place-items-center rounded-xl border border-line bg-surface md:hidden"><Menu className="h-5 w-5" /></button>
+          <div className="md:hidden"><Logo collapsed /></div>
           <div className="flex-1" />
           <ThemeToggle /><Notifications /><UserMenu />
         </header>
-        <main className="mx-auto w-full max-w-[1400px] px-4 pb-24 pt-6 sm:px-6 lg:pb-10">
+        <main className="mx-auto w-full max-w-[1400px] px-3 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-4 sm:px-6 sm:pt-6 md:pb-10 min-[1800px]:max-w-[1680px]">
           {/* Enter-only transition. An exit animation (AnimatePresence mode="wait") deadlocks with lazy-loaded routes:
               the new page suspends while the old one is exiting and the outlet stays blank. */}
           <motion.div key={loc.pathname} variants={page} initial="initial" animate="enter"><Outlet /></motion.div>
         </main>
       </div>
 
-      {/* Mobile bottom bar */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden">
-        <div className="grid grid-cols-4">
-          {['/', '/payslips', '/tax', '/profile'].map((to) => NAV.find((x) => x.to === to)!).map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => clsx('relative flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-semibold', isActive ? 'text-brand' : 'text-muted')}>
-              {({ isActive }) => (<>{isActive && <motion.span layoutId="bottom-pill" className="absolute top-0 h-0.5 w-10 rounded-full bg-brand" />}<motion.span animate={{ scale: isActive ? 1.15 : 1 }}>{n.icon}</motion.span>{n.label.split(' ')[0]}</>)}
+      {/* Phone bottom bar: the four places this role uses most, plus Menu for everything else */}
+      <nav className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/90 backdrop-blur-xl md:hidden">
+        <div className="grid grid-cols-5">
+          {(can('COMPANY_ADMIN', 'PAYROLL_MANAGER')
+            ? [['/', 'Home', LayoutDashboard], ['/employees', 'People', Users], ['/payroll', 'Payroll', Banknote], ['/reports', 'Reports', FileSpreadsheet]]
+            : [['/', 'Home', LayoutDashboard], ['/payslips', 'Payslips', ReceiptText], ['/tax', 'Tax', Calculator], ['/profile', 'Profile', UserCircle2]]
+          ).map(([to, label, Icon]: any) => (
+            <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => clsx('relative flex min-h-[56px] flex-col items-center justify-center gap-0.5 text-[11px] font-semibold', isActive ? 'text-brand' : 'text-muted')}>
+              {({ isActive }) => (<>{isActive && <motion.span layoutId="bottom-pill" className="absolute top-0 h-0.5 w-10 rounded-full bg-brand" />}<motion.span animate={{ scale: isActive ? 1.15 : 1 }}><Icon className="h-5 w-5" /></motion.span>{label}</>)}
             </NavLink>
           ))}
+          <button onClick={() => setMobile(true)} className="flex min-h-[56px] flex-col items-center justify-center gap-0.5 text-[11px] font-semibold text-muted"><Menu className="h-5 w-5" />Menu</button>
         </div>
       </nav>
     </div>
