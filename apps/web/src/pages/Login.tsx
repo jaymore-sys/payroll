@@ -66,11 +66,11 @@ export default function Login() {
                   <div><h2 className="text-3xl font-extrabold tracking-tight">Welcome back</h2><p className="mt-1.5 text-sm text-muted">Sign in to your workspace</p></div>
                   <Field label="Work email">
                     <div className="relative"><Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-                      <Input type="email" autoComplete="username" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} className="pl-10" placeholder="you@company.com" /></div>
+                      <Input type="email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} required autoFocus value={email} onChange={(e) => setEmail(e.target.value.trim())} className="pl-10" placeholder="you@company.com" /></div>
                   </Field>
                   <Field label="Password">
                     <div className="relative"><Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-                      <Input type={show ? 'text' : 'password'} autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} className="px-10" placeholder="••••••••••" />
+                      <Input type={show ? 'text' : 'password'} autoComplete="current-password" autoCapitalize="none" autoCorrect="off" spellCheck={false} required value={password} onChange={(e) => setPassword(e.target.value)} className="px-10" placeholder="••••••••••" />
                       <button type="button" onClick={() => setShow(!show)} aria-label={show ? 'Hide password' : 'Show password'} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink">{show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
                   </Field>
                 </motion.div>

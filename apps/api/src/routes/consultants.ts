@@ -30,7 +30,7 @@ const body = z.object({
 });
 
 const show = (c: typeof C.$inferSelect) => ({
-  id: c.id, code: c.code, name: c.name, email: c.email, panLast4: c.panLast4, hasPan: !!c.panEnc, bankLast4: c.bankLast4, hasBank: !!c.bankEnc,
+  id: c.id, code: c.code, name: c.name, email: c.email, panLast4: c.panLast4, pan: c.panEnc ? decrypt(c.panEnc) : null, hasPan: !!c.panEnc, bankLast4: c.bankLast4, hasBank: !!c.bankEnc,
   monthlyFee: Number(c.monthlyFee), tdsRate: Number(c.tdsRate), startDate: c.startDate, endDate: c.endDate, active: c.active,
 });
 const secrets = (d: { pan?: string | null; bank?: { account: string; ifsc: string } | null }, name: string) => ({
@@ -144,6 +144,22 @@ consultantsRouter.post('/consultant-runs/:month/calculate', requireRole(...ADMIN
   });
   await audit(req, 'calculate', 'consultant_run', run!.id, undefined, totals);
   res.json({ totals });
+}));
+
+/** One consultant's payment for the printable payment slip. */
+consultantsRouter.get('/consultant-payments/:id', requireRole(...ADMIN), h(async (req, res) => {
+  const [r] = await db.select({ p: P, c: C, month: R.month, status: R.status }).from(P).innerJoin(C, eq(C.id, P.consultantId)).innerJoin(R, eq(R.id, P.runId))
+    .where(and(eq(P.companyId, req.user!.cid), eq(P.id, req.params.id)));
+  if (!r) throw notFound('Payment');
+  const [company] = await db.select().from(schema.companies).where(eq(schema.companies.id, req.user!.cid));
+  const b = r.c.bankEnc ? decryptJson<{ account: string; ifsc: string }>(r.c.bankEnc) : null;
+  await audit(req, 'view_consultant_slip', 'consultant_payment', r.p.id);
+  res.set('Cache-Control', 'no-store').json({
+    id: r.p.id, month: r.month, status: r.status, company: { name: company.legalName ?? company.name },
+    consultant: { code: r.c.code, name: r.c.name, email: r.c.email, pan: r.c.panEnc ? decrypt(r.c.panEnc) : null, account: b?.account ?? null, ifsc: b?.ifsc ?? null, tdsRate: Number(r.c.tdsRate) },
+    fee: Number(r.p.fee), daysInMonth: r.p.daysInMonth, lopDays: Number(r.p.lopDays), adjustment: Number(r.p.adjustment),
+    amountOverride: r.p.amountOverride != null ? Number(r.p.amountOverride) : null, amount: Number(r.p.amount), tds: Number(r.p.tds), net: Number(r.p.net), note: r.p.note,
+  });
 }));
 
 const setStatus = (to: 'FINALISED' | 'CALCULATED', from: 'CALCULATED' | 'FINALISED') => h(async (req: Request, res) => {

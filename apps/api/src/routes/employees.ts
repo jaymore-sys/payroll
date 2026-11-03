@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { db, insertReturning, schema, updateReturning } from '../db';
 import { audit } from '../lib/audit';
 import { employeeAccess, notifyUsersOfEmployees, teamIds, type Access } from '../lib/access';
-import { canSeePay, DEFAULT_PASSWORD, hashPassword, hasRole, requireRole } from '../lib/auth';
+import { canSeePay, DEFAULT_PASSWORD, ensureLogin, hashPassword, hasRole, requireRole } from '../lib/auth';
 import { decrypt, decryptJson, encrypt, encryptJson, mask } from '../lib/crypto';
 import { needsRecalc } from '../lib/runs';
 import { passwordSchema } from './auth';
@@ -39,7 +39,7 @@ const payFields = {
 };
 /** Exact monthly salary components (e.g. copied from RazorpayX's Master CTC Report). */
 const componentsSchema = z.array(z.object({ code: z.string().regex(/^[A-Z0-9_]{2,20}$/), name: z.string().min(1).max(60), monthly: z.number().min(0).max(1e8), isWage: z.boolean() })).min(1).max(20);
-const createSchema = z.object({ ...personal, ...payFields, code: z.string().regex(/^[A-Z0-9-]{2,20}$/).optional(), createLogin: z.boolean().default(false), annualCtc: z.number().positive().max(1e9).optional(), monthlyGross: z.number().positive().max(1e8).optional(), components: componentsSchema.optional() })
+const createSchema = z.object({ ...personal, ...payFields, code: z.string().regex(/^[A-Z0-9-]{2,20}$/).optional(), createLogin: z.boolean().default(true), annualCtc: z.number().positive().max(1e9).optional(), monthlyGross: z.number().positive().max(1e8).optional(), components: componentsSchema.optional() })
   .partial({ pfOptOut: true, ptExempt: true, international: true, taxRegime: true, metro: true, noticeDays: true, employmentType: true });
 
 /** Encrypt sensitive inputs; only last-4 is kept in clear for masked display. Full Aadhaar is never stored. */
@@ -71,7 +71,7 @@ function view(r: { row: typeof E.$inferSelect } & Record<string, unknown>, showP
   if (!showPay) return base;
   return {
     ...base, dob: row.dob, personalEmail: row.personalEmail, maritalStatus: row.maritalStatus, probationEnd: row.probationEnd, noticeDays: row.noticeDays,
-    pan: mask(row.panLast4), bank: mask(row.bankLast4), aadhaar: mask(row.aadhaarLast4), uan: row.uan, esiIp: row.esiIp,
+    pan: row.panEnc ? decrypt(row.panEnc) : null, bank: mask(row.bankLast4), aadhaar: mask(row.aadhaarLast4), uan: row.uan, esiIp: row.esiIp,
     pfOptOut: row.pfOptOut, ptExempt: row.ptExempt, international: row.international, taxRegime: row.taxRegime, metro: row.metro,
     lastWorkingDay: row.lastWorkingDay, exitReason: row.exitReason,
   };
@@ -131,7 +131,7 @@ const loginOf = async (cid: string, empId: string) => {
 };
 employeesRouter.get('/employees/:id/login', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
   const { e, u } = await loginOf(req.user!.cid, req.params.id);
-  res.json(u ? { exists: true, email: u.email, active: u.active, lastLoginAt: u.lastLoginAt, mustChangePassword: u.mustChangePassword, locked: !!u.lockedUntil && u.lockedUntil > new Date() }
+  res.json(u ? { exists: true, id: u.id, roles: u.roles, email: u.email, active: u.active, lastLoginAt: u.lastLoginAt, mustChangePassword: u.mustChangePassword, locked: !!u.lockedUntil && u.lockedUntil > new Date() }
     : { exists: false, email: e.workEmail });
 }));
 /** Admin sets (or resets to the default) an employee's login password; creates the login if there is none. */
@@ -225,15 +225,16 @@ employeesRouter.post('/employees', requireRole('COMPANY_ADMIN'), h(async (req, r
   const d = parse(createSchema, req.body);
   const cid = req.user!.cid;
   await assertRefs(cid, d);
+  if (d.createLogin) {
+    const [taken] = await db.select({ employeeId: schema.users.employeeId, companyId: schema.users.companyId }).from(schema.users).where(eq(schema.users.email, d.workEmail));
+    if (taken && (taken.employeeId || taken.companyId !== cid)) throw new ApiError(409, 'email_taken', `${d.workEmail} is already the login of another person — use a different work email`);
+  }
   const code = d.code ?? (await nextCode(cid));
   const { pan, bank, aadhaar, createLogin, annualCtc, monthlyGross, components, code: _c, ...rest } = d;
   const [row] = await insertReturning(E, { ...rest, code, companyId: cid, createdBy: req.user!.sub, ...sensitiveColumns({ pan, bank, aadhaar }) } as typeof E.$inferInsert);
   await creditJoinerLeave(cid, row.id, row.doj, row.gender, req.user!.sub);
   let tempPassword: string | undefined;
-  if (createLogin) {
-    tempPassword = DEFAULT_PASSWORD;
-    await db.insert(schema.users).values({ companyId: cid, email: row.workEmail, passwordHash: await hashPassword(tempPassword), roles: ['EMPLOYEE'], employeeId: row.id, mustChangePassword: true });
-  }
+  if (createLogin && (await ensureLogin(cid, row.id, row.workEmail)) === 'created') tempPassword = DEFAULT_PASSWORD;
   if (monthlyGross || annualCtc || components) await createRevision(req, row.id, { monthlyGross, annualCtc, components }, 0, row.doj);
   await audit(req, 'create', 'employee', row.id, undefined, { ...row, panEnc: undefined, bankEnc: undefined });
   res.status(201).json({ id: row.id, code: row.code, tempPassword });
@@ -338,11 +339,12 @@ employeesRouter.post('/employees/import', requireRole('COMPANY_ADMIN'), h(async 
       ...sensitiveColumns({ pan: d.pan, bank: d.accountNumber ? { holder: `${d.firstName} ${d.lastName}`, account: d.accountNumber, ifsc: d.ifsc! } : undefined }),
     });
     await creditJoinerLeave(cid, row.id, row.doj, row.gender, req.user!.sub);
+    await ensureLogin(cid, row.id, row.workEmail); // every imported employee can sign in with the default password
     if (d.monthlyGross || d.annualCtc) await createRevision(req, row.id, { monthlyGross: d.monthlyGross, annualCtc: d.annualCtc }, 0, row.doj);
     created.push(row.id);
   }
   await audit(req, 'import', 'employee', null, undefined, { count: created.length });
-  res.json({ dryRun: false, total: rows.length, created: created.length, errorCount: 0, report: [] });
+  res.json({ dryRun: false, total: rows.length, created: created.length, errorCount: 0, report: [], defaultPassword: DEFAULT_PASSWORD });
 }));
 
 /* ---------------- salary ---------------- */

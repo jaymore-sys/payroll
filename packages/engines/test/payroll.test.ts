@@ -40,15 +40,22 @@ describe('computePayslip (spec §10.2)', () => {
     expect(p.periodDays).toBe(16);
     expect(Math.abs(p.gross - (s.monthlyGross * 16) / 31)).toBeLessThan(3);
   });
-  it('bonus, arrears and deductions change net pay only — TDS, PF and PT stay the same', () => {
+  it('bonus, arrears and other earnings are taxed in full this month; PF and PT unchanged', () => {
     const a = computePayslip(base(), SR, TR);
     const b = computePayslip(base({ bonus: 100000, arrears: 5000, otherEarnings: 1000, otherDeductions: 2500 }), SR, TR);
     expect(b.gross - a.gross).toBe(106000);
-    expect(b.deductions.tds).toBe(a.deductions.tds);
+    expect(b.deductions.tds - a.deductions.tds).toBe(b.tax.annualTax - a.tax.annualTax);
+    expect(b.deductions.tds).toBeGreaterThan(a.deductions.tds);
     expect(b.deductions.pf).toBe(a.deductions.pf);
     expect(b.deductions.pt).toBe(a.deductions.pt);
-    expect(b.net - a.net).toBe(106000 - 2500);
-    expect(b.taxableGross).toBe(a.taxableGross);
+    expect(b.taxableGross).toBe(b.gross);
+    const yb = b.tax.yearly.reduce((s, y) => s + y.gross, 0);
+    expect(Math.abs(yb - (b.tax.worksheet.find((l) => l.label === 'Gross salary')!.amount))).toBeLessThanOrEqual(12); // component rounding
+    expect(b.tax.yearly.map((y) => y.name)).toEqual(expect.arrayContaining(['Bonus', 'Arrear', 'Other earnings']));
+  });
+  it('February professional tax is ₹300', () => {
+    expect(computePayslip(base({ month: '2027-02' }), SR, TR).deductions.pt).toBe(300);
+    expect(computePayslip(base({ month: '2027-01' }), SR, TR).deductions.pt).toBe(200);
   });
   it('PT exempt employee pays no PT; no gratuity in employer cost', () => {
     const p = computePayslip(base({ employee: { ...emp, ptExempt: true } }), SR, TR);

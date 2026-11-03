@@ -34,7 +34,7 @@ function ConsultantForm({ c, open, onClose }: { c?: any; open: boolean; onClose:
         <Field label="Code (optional)"><Input value={v.code} onChange={set('code')} /></Field>
         <Field label="Monthly fee (₹)"><Input inputMode="numeric" value={v.monthlyFee} onChange={(e) => setV({ ...v, monthlyFee: e.target.value.replace(/\D/g, '') })} placeholder="e.g. 60000" /></Field>
         <Field label="TDS"><Select value={v.tdsRate} onChange={set('tdsRate')}>{RATES.map(([r, l]) => <option key={r} value={r}>{l}</option>)}</Select></Field>
-        <Field label="PAN" hint={c?.hasPan ? `Saved: XXXXXX${c.panLast4} — leave blank to keep` : 'Without PAN, TDS is 20%'}><Input value={v.pan} onChange={(e) => setV({ ...v, pan: e.target.value.toUpperCase() })} placeholder="ABCDE1234F" /></Field>
+        <Field label="PAN" hint={c?.hasPan ? `Saved: ${c.pan} — leave blank to keep` : 'Without PAN, TDS is 20%'}><Input value={v.pan} onChange={(e) => setV({ ...v, pan: e.target.value.toUpperCase() })} placeholder="ABCDE1234F" /></Field>
         <Field label="Email (optional)"><Input value={v.email} onChange={set('email')} /></Field>
         <Field label="Bank account number" hint={c?.hasBank ? `Saved: XXXXXX${c.bankLast4} — leave blank to keep` : undefined}><Input inputMode="numeric" value={v.account} onChange={(e) => setV({ ...v, account: e.target.value.replace(/\D/g, '') })} /></Field>
         <Field label="IFSC"><Input value={v.ifsc} onChange={(e) => setV({ ...v, ifsc: e.target.value.toUpperCase() })} placeholder="HDFC0001234" /></Field>
@@ -61,7 +61,7 @@ function ConsultantList() {
               { h: 'Consultant', cell: (c: any) => <div><p className="font-semibold">{c.name}</p><p className="text-xs text-muted">{c.code ?? ''}{c.email ? ` · ${c.email}` : ''}</p></div> },
               { h: 'Monthly fee', className: 'text-right', cell: (c: any) => <b className="tabular-nums">{inr(c.monthlyFee)}</b> },
               { h: 'TDS', cell: (c: any) => <Badge tone="brand">{c.hasPan ? `${Math.round(c.tdsRate * 100)}%` : '20% (no PAN)'}</Badge> },
-              { h: 'PAN / bank', cell: (c: any) => <span className="text-xs text-muted">{c.hasPan ? `PAN ••${c.panLast4}` : 'No PAN'} · {c.hasBank ? `A/c ••${c.bankLast4}` : <span className="text-bad">no bank</span>}</span>, hideOnMobile: true },
+              { h: 'PAN / bank', cell: (c: any) => <span className="text-xs text-muted">{c.hasPan ? `PAN ${c.pan}` : 'No PAN'} · {c.hasBank ? `A/c ••${c.bankLast4}` : <span className="text-bad">no bank</span>}</span>, hideOnMobile: true },
               { h: 'Since', cell: (c: any) => <span className="text-xs">{date(c.startDate)}{c.endDate ? ` → ${date(c.endDate)}` : ''}</span>, hideOnMobile: true },
               { h: '', cell: (c: any) => c.active ? <Pencil className="h-4 w-4 text-muted" /> : <Badge>inactive</Badge> },
             ]} />)}

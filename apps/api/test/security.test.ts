@@ -29,6 +29,17 @@ beforeAll(async () => {
 afterAll(() => closeDb());
 
 describe('authentication', () => {
+  it('every new employee (form or bulk import) can sign in with Valencia123', async () => {
+    const one = await as('admin').post('/employees', { firstName: 'New', lastName: 'Joiner', gender: 'F', workEmail: 'New.Joiner@alpha.test', doj: '2026-11-01', employmentType: 'permanent' });
+    expect(one.status).toBe(201);
+    expect(one.body.tempPassword).toBe('Valencia123');
+    expect((await login(' new.joiner@alpha.test ', 'Valencia123')).status).toBe(200);
+    const dup = await as('admin').post('/employees', { firstName: 'Dup', lastName: 'Joiner', gender: 'F', workEmail: 'new.joiner@alpha.test', doj: '2026-11-01', employmentType: 'permanent' });
+    expect(dup.status).toBe(409);
+    const imp = await as('admin').post('/employees/import', { dryRun: false, rows: [{ firstName: 'Bulk', lastName: 'Person', workEmail: 'bulk.person@alpha.test', gender: 'M', doj: '2026-11-01' }] });
+    expect(imp.body.created).toBe(1);
+    expect((await login('bulk.person@alpha.test', 'Valencia123')).status).toBe(200);
+  });
   it('admin edits an employee profile and sets their login password', async () => {
     const emp = { id: (await as('employee').get('/auth/me')).body.employeeId as string };
     expect((await as('payroll').post(`/employees/${emp.id}/login-password`, { resetToDefault: true })).status).toBe(403);
@@ -138,7 +149,7 @@ describe('sensitive data', () => {
     const raw = await rawRows<{ pan_enc: string }>(sql`SELECT pan_enc FROM employee WHERE id = ${id}`);
     expect(raw[0].pan_enc).toMatch(/^v1\./);
     expect(raw[0].pan_enc).not.toMatch(/[A-Z]{5}\d{4}[A-Z]/);
-    expect((await as('admin').get(`/employees/${id}`)).body.pan).toMatch(/^••••••/);
+    expect((await as('admin').get(`/employees/${id}`)).body.pan).toMatch(/^[A-Z]{5}\d{4}[A-Z]$/); // full PAN for admins
     const s = await as('admin').get(`/employees/${id}/sensitive`);
     expect(s.body.pan).toMatch(/^[A-Z]{5}\d{4}[A-Z]$/);
     const log = await as('admin').get(`/audit?entity=employee&id=${id}&action=view_sensitive`);

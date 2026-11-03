@@ -52,7 +52,7 @@ export default function Payslips() {
         {!slip ? <Skeleton className="h-72" /> : (
           <>
             <div className="mb-4 flex flex-wrap justify-between gap-2 text-sm"><div><p className="font-bold">{slip.employee.firstName} {slip.employee.lastName}</p><p className="text-muted">{slip.employee.code} · {slip.employee.designation ?? ''}</p></div>
-              <div className="text-right text-muted"><p>{slip.company.name}</p><p>PAN ••••{slip.employee.panLast4 ?? '—'} · UAN {slip.employee.uan ?? '—'}</p></div></div>
+              <div className="text-right text-muted"><p>{slip.company.name}</p><p>PAN {slip.employee.pan ?? '—'} · UAN {slip.employee.uan ?? '—'}</p></div></div>
             <PayslipBody p={slip.payslip} />
           </>)}
       </Modal>

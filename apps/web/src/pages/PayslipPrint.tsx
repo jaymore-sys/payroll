@@ -1,10 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { amt, dmy, InfoColumn, Page, PrintStyles, Section, shortMonth, SlipHeader, Summary } from '../components/SlipParts';
 import { get } from '../lib/api';
-import { date } from '../lib/format';
-
-const amt = (n: number) => Math.round(n).toLocaleString('en-IN');
 
 /** Indian-system amount in words: 1,70,386 → "One Lakh Seventy Thousand Three Hundred Eighty Six". */
 export function inWords(n: number): string {
@@ -25,59 +23,99 @@ export function inWords(n: number): string {
   return parts.join(' ');
 }
 
-/** A4 payslip in the company's format (Net = Gross − Deductions, Monthly vs Total columns); opens the print dialog for "Save as PDF". */
+/** Employee payslip in the RazorpayX layout: page 1 pay, page 2 the tax computation. Opens the print dialog ("Save as PDF") unless ?view=1. */
 export default function PayslipPrint() {
   const { id = '' } = useParams();
+  const [qs] = useSearchParams();
   const { data, error } = useQuery<any>({ queryKey: ['payslip', id], queryFn: () => get(`/payslips/${id}`) });
-  useEffect(() => { if (data) { document.title = `Payslip-${data.employee.firstName} ${data.employee.lastName}-${data.label}`; setTimeout(() => window.print(), 400); } }, [data]);
+  useEffect(() => {
+    if (!data) return;
+    document.title = `Payslip-${data.employee.firstName} ${data.employee.lastName}-${data.label}`;
+    if (!qs.get('view')) setTimeout(() => window.print(), 600);
+  }, [data, qs]);
   if (error) return <p className="p-8">{(error as Error).message}</p>;
   if (!data) return <p className="p-8 text-sm">Preparing payslip…</p>;
-  const p = data.payslip, e = data.employee;
-  const earnings: { name: string; full: number; amount: number }[] = p.earnings;
-  const extras = p.lines.filter((l: any) => l.section === 'earning' && !earnings.some((x) => x.name === l.label));
-  const ded = p.lines.filter((l: any) => l.section === 'deduction');
-  const lopAmount = earnings.reduce((s, x) => s + x.full - x.amount, 0);
-  const info: [string, string | number | null][] = [
-    ['Employee Code', e.code], ['Name', `${e.firstName} ${e.lastName}`], ['Designation', e.designation], ['Date of birth', e.dob ? date(e.dob) : null],
-    ['PAN', e.panLast4 ? `XXXXXX${e.panLast4}` : null], ['UAN', e.uan], ['Account no.', e.bankLast4 ? `XXXXXX${e.bankLast4}` : null], ['IFSC code', e.ifsc],
-    ['Date of joining', date(e.doj)], ['Payable Days', p.payableDays], ['LOP Days', p.lopDays || null], p.intern ? ['Type', 'Intern'] : ['Regime Opted', p.tax.regime === 'old' ? 'Old Regime' : 'New Regime'],
-  ];
-  const Table = ({ head, rows, total, totalLabel, note }: { head: string; rows: [string, number, number][]; total: number; totalLabel: string; note?: string }) => (
-    <div>
-      <table className="w-full text-left">
-        <thead><tr className="border-b border-slate-300 text-slate-500"><th className="py-2 font-semibold">{head}</th><th className="py-2 text-right font-semibold">Monthly</th><th className="py-2 text-right font-semibold">Total Amount</th></tr></thead>
-        <tbody>{rows.map(([l, m, t]) => <tr key={l} className="border-b border-slate-100"><td className="py-1.5">{l}</td><td className="py-1.5 text-right tabular-nums">{amt(m)}</td><td className="py-1.5 text-right tabular-nums">{amt(t)}</td></tr>)}</tbody>
-      </table>
-      <div className="mt-1 flex justify-end gap-10 py-1.5 font-bold"><span>{totalLabel}</span><span className="w-24 text-right tabular-nums">{amt(total)}</span></div>
-      {note && <p className="text-[11px] text-slate-500">{note}</p>}
-    </div>
-  );
+
+  const p = data.payslip, e = data.employee, t = p.tax ?? {};
+  const intern = e.employmentType === 'intern' || p.intern;
+  const extras = p.lines.filter((l: any) => l.section === 'earning' && !p.earnings.some((x: any) => x.name === l.label)).map((l: any) => [l.label === 'Arrears' ? 'Arrear' : l.label, l.amount, l.amount]);
+  const lopAmount = p.earnings.reduce((s: number, x: any) => s + x.full - x.amount, 0);
+  const ded = p.lines.filter((l: any) => l.section === 'deduction').map((l: any) => [l.label, l.amount, l.amount]);
+  const w = (label: string) => (t.worksheet ?? []).find((l: any) => l.label.startsWith(label))?.amount ?? 0;
+  const yearly: { name: string; gross: number; exempt: number; taxable: number }[] = t.yearly ?? [];
+  const showTax = !intern && yearly.length > 0;
+  const pages = showTax ? 2 : 1;
+  const annualTaxable = yearly.reduce((s, y) => s + y.taxable, 0) + (t.prevEmployer?.taxable ?? 0);
+  const deductedTillDate = t.paidSoFar ?? 0;
+  const netTax = t.annualTax ?? 0;
+
   return (
-    <div className="mx-auto max-w-[820px] bg-white p-4 text-[13px] text-slate-900 sm:p-8 print:p-0">
-      <style>{'@page { size: A4; margin: 12mm } body { background: white !important } html { color-scheme: light }'}</style>
-      <div className="flex items-start justify-between">
-        <div><p className="text-xl font-extrabold uppercase">{data.company.name}</p>{data.company.address && <p className="text-slate-500">{data.company.address}</p>}</div>
-        <p className="font-semibold text-slate-600">Payslip: {new Date(`${data.month}-01T00:00`).toLocaleString('en-IN', { month: 'short', year: 'numeric' })}</p>
+    <div className="min-h-dvh py-2 print:py-0">
+      <PrintStyles />
+      <div className="no-print mx-auto mb-2 flex max-w-[210mm] justify-end gap-2 px-2">
+        <button onClick={() => window.print()} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white">Download PDF</button>
       </div>
-      <div className="mt-5 flex flex-wrap items-end gap-x-6 gap-y-2 rounded-lg bg-slate-50 px-5 py-4">
-        <div><p className="text-xs text-slate-500">Net Pay</p><p className="text-3xl font-extrabold">{amt(p.net)}</p></div>
-        <span className="pb-1 text-xl text-slate-400">=</span>
-        <div><p className="text-xs text-slate-500">{p.intern ? 'Stipend' : 'Gross Pay (A)'}</p><p className="text-lg font-bold">+ {amt(p.gross)}</p></div>
-        {(!p.intern || p.deductions.total > 0) && <div><p className="text-xs text-slate-500">Deductions (B)</p><p className="text-lg font-bold">− {amt(p.deductions.total)}</p></div>}
-      </div>
-      <div className="mt-5 grid gap-6 sm:grid-cols-[190px_1fr]">
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 border-slate-200 sm:block sm:space-y-2.5 sm:border-r sm:pr-4">{info.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => <div key={k}><dt className="text-[11px] text-slate-500">{k}</dt><dd className="font-semibold">{v}</dd></div>)}</dl>
-        <div className="space-y-6">
-          <div><p className="mb-1 font-bold">Gross Pay (A) <span className="font-normal text-slate-500">The total money you earned before the deductions</span></p>
-            <Table head="Earnings" totalLabel={lopAmount > 0 ? 'Gross Pay *' : 'Gross Pay'} total={p.gross}
-              rows={[...earnings.map((x) => [x.name, x.full, x.amount] as [string, number, number]), ...extras.map((l: any) => [l.label, l.amount, l.amount] as [string, number, number])]}
-              note={lopAmount > 0 ? `* Loss of pay amount deducted from actual gross pay is ${amt(lopAmount)}` : undefined} /></div>
-          {(!p.intern || p.deductions.total > 0) && <div><p className="mb-1 font-bold">Deductions (B) <span className="font-normal text-slate-500">The amount deducted for taxes and other benefits</span></p>
-            <Table head="Deductions" totalLabel="Total Deductions" total={p.deductions.total} rows={ded.map((l: any) => [l.label === 'Provident fund' ? 'Employee PF Contribution' : l.label, l.amount, l.amount])} /></div>}
-          <p className="text-slate-600">Net pay in words: <b>Rupees {inWords(p.net)} Only</b></p>
+      <Page n={1} of={pages}>
+        <SlipHeader company={data.company.name} month={data.month} />
+        <Summary net={p.net} gross={p.gross} deductions={p.deductions.total} />
+        <div className="relative mt-6 grid grid-cols-[44mm_1fr] gap-4">
+          <InfoColumn rows={[
+            ['Employee Code', e.code?.replace(/^EMP0*/, '') || e.code], ['Name', `${e.firstName} ${e.lastName}`], ['Date of birth', dmy(e.dob)], ['PAN', e.pan],
+            ['UAN', e.uan], ['Account no.', e.account], ['IFSC code', e.ifsc], ['Date of joining', dmy(e.doj)],
+            ['Payable Days', p.payableDays], ['LOP Days', p.lopDays || null], ['Regime Opted', intern ? null : t.regime === 'old' ? 'Old Regime' : 'New Regime'],
+          ]} />
+          <div>
+            <Section t="green" title="Gross Pay (A)" sub="The total money you earned before the deductions" head={['Earnings', 'Monthly', 'Total Amount']}
+              rows={[...p.earnings.map((x: any) => [x.name, x.full, x.amount]), ...extras]}
+              total={[lopAmount > 0 ? 'Gross Pay *' : 'Gross Pay', p.gross]}
+              note={lopAmount > 0 ? `* Loss of pay amount deducted from actual gross pay is ${amt(lopAmount)}` : undefined} />
+            {ded.length > 0 && <Section t="orange" title="Deductions (B)" sub="The amount deducted for taxes and other benefits" head={['Deductions', 'Monthly', 'Total Amount']}
+              rows={ded} total={['Total Deductions', p.deductions.total]} />}
+          </div>
         </div>
-      </div>
-      <p className="mt-10 border-t border-slate-200 pt-3 text-center text-[11px] text-slate-400">This is a computer generated payslip and does not require a signature</p>
+        {showTax && <div className="mt-2">
+          <Section t="blue" title="Yearly Taxable Income (C)" sub="The money you will earn annually excluding the exemptions you declare" head={['Description', 'Gross', 'Exempted', 'Taxable']}
+            rows={[...yearly.map((y) => [y.name, y.gross, y.exempt, y.taxable]), ...(t.prevEmployer?.taxable ? [['Previous employer income', t.prevEmployer.taxable, 0, t.prevEmployer.taxable]] : [])]}
+            total={['Annual Taxable Salary', annualTaxable]} />
+        </div>}
+      </Page>
+
+      {showTax && <Page n={2} of={2}>
+        <Section t="green" title="Net Taxable Income (E)" sub="Your taxes are calculated on this amount after considering all investments you claimed to save taxes" head={['Details', 'Amount']}
+          rows={[
+            ['Annual Taxable Salary(C)', annualTaxable],
+            ['Standard Deductions (Section 16)', -w('Standard deduction')],
+            ...(w('Professional tax') ? [['Professional Tax (Section 16)', -w('Professional tax')]] : []),
+            ...(w('80C') ? [['Section 80C', -w('80C')]] : []),
+            ...(w('80D') ? [['Section 80D', -w('80D')]] : []),
+            ...(w('80CCD(1B)') ? [['Section 80CCD(1B)', -w('80CCD(1B)')]] : []),
+            ...(w('Employer NPS') ? [['Section 80CCD(2)', -w('Employer NPS')]] : []),
+            ...(w('Home loan') ? [['Section 24(b)', -w('Home loan')]] : []),
+          ]} total={['Net Taxable Income', w('Taxable income')]} />
+        <Section t="orange" title={`Tax for ${data.month >= `${data.month.slice(0, 4)}-04` ? `${data.month.slice(0, 4)} - ${String(Number(data.month.slice(0, 4)) + 1).slice(2)}` : `${Number(data.month.slice(0, 4)) - 1} - ${data.month.slice(2, 4)}`}`}
+          sub="Tax will be deducted on this Net Taxable Salary after all exemptions" head={['Details', 'Amount']}
+          rows={[
+            ['Tax on Taxable Income', w('Slab tax')],
+            ...(w('Rebate 87A') ? [['Tax Rebate u/s 87A', w('Rebate 87A')]] : []),
+            ...(w('Surcharge') ? [['Surcharge', w('Surcharge')]] : []),
+            ...(w('Health & education cess') ? [['Health & Education Cess', w('Health & education cess')]] : []),
+            ['Net Tax', netTax],
+            ['Tax Deducted Till Date (Current Employer)', deductedTillDate],
+          ]} total={['Tax To Be Deducted This Year', Math.max(0, netTax - deductedTillDate)]} />
+        <div className="mb-5">
+          <p className="mb-2 text-[11.5px] font-bold">Tax for {shortMonth(data.month)} <span className="ml-3 text-[9.5px] font-normal text-slate-500">Tax to be deducted (F) / No. of payroll executions left in this financial year</span></p>
+          <div className="flex justify-between bg-rose-50/60 px-3 py-2.5"><span className="text-slate-500">Tax to be deducted this month</span><span>{amt(p.deductions.tds)}</span></div>
+          <div className="flex justify-end gap-10 bg-rose-50 px-3 py-2.5 font-bold"><span>Tax Deducted This Month</span><span className="min-w-[60px] text-right">{amt(p.deductions.tds)}</span></div>
+        </div>
+        {data.monthlyTax?.length > 0 && <div className="relative pl-5">
+          <span className="absolute bottom-3 left-0 top-3 w-[1.5px] bg-indigo-500" /><span className="absolute left-0 top-3 h-[1.5px] w-5 bg-indigo-500" />
+          <p className="mb-3 flex items-center gap-2 pl-2 text-[11.5px] font-bold">Monthly tax<span className="h-1.5 w-1.5 rotate-45 bg-indigo-400" /><span className="text-[9.5px] font-normal text-slate-500">Projected TDS for rest of the year are marked with <span className="text-indigo-500">*</span></span></p>
+          <div className="grid grid-cols-6 gap-y-4 bg-indigo-50/50 px-3 py-3">
+            {data.monthlyTax.map((m: any) => <div key={m.month}><p className="text-[10.5px] text-slate-500">{m.label}{m.projected && <span className="text-indigo-500"> *</span>}</p><p className="text-[11px]">{amt(m.amount)}</p></div>)}
+          </div>
+          <p className="mt-2 pl-2 text-[9.5px] text-slate-500"><span className="text-indigo-500">*</span> These may change if there is a change in your income</p>
+        </div>}
+      </Page>}
     </div>
   );
 }

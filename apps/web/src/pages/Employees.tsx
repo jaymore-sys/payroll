@@ -60,7 +60,7 @@ function AddEmployee({ open, onClose }: { open: boolean; onClose: () => void }) 
           <p className="text-lg font-bold">Employee {done.code} created</p>
           {done.tempPassword && (
             <div className="mx-auto mt-4 max-w-sm rounded-2xl border border-warn/40 bg-warn/10 p-4 text-left">
-              <p className="text-xs font-semibold text-warn">Temporary password — shown only once. Share it securely.</p>
+              <p className="text-xs font-semibold text-warn">Login created. They sign in with their work email and this default password, then choose their own.</p>
               <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-surface px-3 py-2 font-mono text-sm"><span className="truncate">{done.tempPassword}</span>
                 <button onClick={() => { navigator.clipboard.writeText(done.tempPassword!); toast.success('Copied'); }} className="text-muted hover:text-ink" aria-label="Copy"><Copy className="h-4 w-4" /></button></div>
             </div>)}
@@ -121,7 +121,7 @@ function ImportModal({ open, onClose }: { open: boolean; onClose: () => void }) 
     const head = split(lines[0]);
     return lines.slice(1).filter(Boolean).map((l) => Object.fromEntries(split(l).map((v, i) => [head[i], v])));
   };
-  const check = useAct((dryRun: boolean) => post('/employees/import', { rows, dryRun }), { invalidate: [['employees'], ['dashboard']], onDone: (r) => { setReport(r); if (!r.dryRun) toast.success(`${r.created} employees imported`); } });
+  const check = useAct((dryRun: boolean) => post('/employees/import', { rows, dryRun }), { invalidate: [['employees'], ['dashboard']], onDone: (r) => { setReport(r); if (!r.dryRun) toast.success(`${r.created} employees imported — they sign in with their work email and ${r.defaultPassword ?? 'Valencia123'}`, { duration: 7000 }); } });
   const template = 'code,firstName,lastName,workEmail,gender,dob,doj,employmentType,mobile,department,designation,branch,managerCode,pan,ifsc,accountNumber,monthlyGross,uan,esiIp,pfDeduct,ptDeduct\n'
     + ',Asha,Verma,asha.verma@company.com,F,1996-04-15,2026-11-01,permanent,9820012345,Engineering,Developer,Mumbai HQ,EMP0001,ABCDE1234F,HDFC0001234,50100123456,30000,100123456789,,Y,Y\n'
     + ',Rohan,Mehta,rohan.mehta@company.com,M,2003-08-02,2026-11-01,intern,,,,,,,,,10000,,,N,N\n';

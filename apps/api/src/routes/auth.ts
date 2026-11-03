@@ -44,7 +44,7 @@ async function issueSession(req: Request, res: Response, user: typeof U.$inferSe
 }
 
 authRouter.post('/login', h(async (req, res) => {
-  const { email, password } = parse(z.object({ email: z.string().email().max(200), password: z.string().min(1).max(200) }), req.body);
+  const { email, password } = parse(z.object({ email: z.string().trim().email().max(200), password: z.string().min(1).max(200) }), req.body);
   const [user] = await db.select().from(U).where(eq(U.email, email.toLowerCase()));
   const fail = () => new ApiError(401, 'invalid_credentials', 'Invalid email or password');
   if (!user) { await verifyPassword(DUMMY_HASH, password); await audit(req, 'login_failed', 'user', null, undefined, { email }); throw fail(); }

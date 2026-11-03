@@ -29,4 +29,12 @@ app.listen(env.PORT, () => console.log(`Valencia Payroll API on http://localhost
   let n = 0;
   for (const u of pending) if (!(await verifyPassword(u.hash, DEFAULT_PASSWORD))) { await db.update(schema.users).set({ passwordHash: await hashPassword(DEFAULT_PASSWORD) }).where(eq(schema.users.id, u.id)); n++; }
   if (n) console.log(`${n} first-time login(s) set to the default password`);
+  // Every working employee gets a login (work email + default password) if they do not have one yet.
+  const { ensureLogin } = await import('./lib/auth');
+  const { and, inArray } = await import('drizzle-orm');
+  const emps = await db.select({ id: schema.employees.id, cid: schema.employees.companyId, email: schema.employees.workEmail }).from(schema.employees)
+    .where(and(inArray(schema.employees.status, ['ACTIVE', 'NOTICE', 'ONBOARDING'])));
+  let made = 0;
+  for (const e of emps) if (e.email && (await ensureLogin(e.cid, e.id, e.email, false)) === 'created') made++;
+  if (made) console.log(`${made} employee login(s) created with the default password`);
 })().catch((e) => console.warn('Default password update skipped:', (e as Error).message));

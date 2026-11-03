@@ -51,9 +51,9 @@ describe('payroll run → Excel', () => {
     await as('payroll').put(`/payroll-runs/${runId}/inputs`, { items: [{ employeeId: target.employeeId, lopDays: 0, bonus: 5000, arrears: 2500, otherEarnings: 0, otherDeductions: 1000, hold: false }] });
     await as('payroll').post(`/payroll-runs/${runId}/calculate`);
     const mid = (await as('payroll').get(`/payroll-runs/${runId}`)).body.items.find((x: { employeeId: string }) => x.employeeId === target.employeeId).payslip;
-    expect(mid.tds).toBe(before.tds);
+    expect(mid.tds).toBeGreaterThanOrEqual(before.tds); // one-time pay is taxed in full this month
     expect(mid.deductionSplit.pt).toBe(before.deductionSplit.pt);
-    expect(mid.net - before.net).toBe(5000 + 2500 - 1000);
+    expect(mid.net - before.net).toBe(5000 + 2500 - 1000 - (mid.tds - before.tds));
     expect(mid.adjustments).toEqual({ bonus: 5000, arrears: 2500, other: 0 });
     heldName = held.name;
     await as('payroll').put(`/payroll-runs/${runId}/inputs`, { items: [{ employeeId: target.employeeId, lopDays: 2, bonus: 5000, arrears: 2500, otherEarnings: 0, otherDeductions: 1000, hold: false }, { ...held.inputs, employeeId: held.employeeId, hold: true }] });

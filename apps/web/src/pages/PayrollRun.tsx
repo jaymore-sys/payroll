@@ -162,7 +162,7 @@ export default function PayrollRun() {
   const items = useMemo(() => (data?.items ?? []).filter((i: any) => !q || `${i.name} ${i.code} ${i.department}`.toLowerCase().includes(q.toLowerCase())), [data, q]);
   const val = (i: any): Inputs => edits[i.employeeId] ?? i.inputs;
   const set = (i: any, k: keyof Inputs, v: number | boolean) => setEdits((e) => ({ ...e, [i.employeeId]: { ...val(i), [k]: v } }));
-  // Bonus, arrears, other earnings and deductions only move net pay (TDS/PF/PT never change), so preview them live.
+  // Preview net pay while typing; TDS on bonus / arrears / other earnings is added when the run is saved and recalculated.
   const live = (i: any) => {
     const p = i.payslip; if (!p) return null;
     const a = p.adjustments ?? { bonus: 0, arrears: 0, other: 0 }, v = val(i);
@@ -287,7 +287,7 @@ export default function PayrollRun() {
               { h: 'PT', className: 'text-right', cell: (i: any) => <span className="tabular-nums">{i.payslip ? inr(i.payslip.deductionSplit?.pt ?? 0) : '—'}</span>, hideOnMobile: true },
               { h: 'TDS', className: 'text-right', cell: (i: any) => <span className="tabular-nums">{i.payslip ? inr(i.payslip.deductionSplit?.tds ?? 0) : '—'}</span>, hideOnMobile: true },
               { h: 'Deductions', className: 'text-right', cell: (i: any) => <span className="tabular-nums text-bad">{i.payslip ? inr(live(i)!.deductions) : '—'}</span>, hideOnMobile: true },
-              { h: 'Net pay', className: 'text-right', cell: (i: any) => <b className={clsx('tabular-nums text-ok', live(i)?.changed && 'rounded bg-brand-soft px-1')} title={live(i)?.changed ? 'Updated — click Save to keep' : undefined}>{i.payslip ? inr(live(i)!.net) : '—'}</b> },
+              { h: 'Net pay', className: 'text-right', cell: (i: any) => <b className={clsx('tabular-nums text-ok', live(i)?.changed && 'rounded bg-brand-soft px-1')} title={live(i)?.changed ? 'Before TDS on the new amount — click Save to recalculate TDS' : undefined}>{i.payslip ? `${live(i)!.changed ? '≈ ' : ''}${inr(live(i)!.net)}` : '—'}</b> },
               { h: 'vs last month', className: 'text-right', cell: (i: any) => i.variance === null ? <span className="text-muted">—</span> : <Badge tone={Math.abs(i.variance) > 10 ? 'amber' : 'gray'}>{i.variance > 0 ? '+' : ''}{i.variance}%</Badge>, hideOnMobile: true },
             ]} />
         </div>

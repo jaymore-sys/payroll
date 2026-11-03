@@ -9,6 +9,8 @@ import { get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { date, dateTime, inr, today } from '../lib/format';
 import { useAct, useMasters } from '../lib/hooks';
+import { RoleChecks } from './Users';
+import type { Role } from '../lib/auth';
 
 const Row = ({ l, v }: { l: string; v: React.ReactNode }) => <div className="flex items-center justify-between gap-4 py-2 text-sm"><span className="text-muted">{l}</span><span className="text-right font-medium">{v ?? '—'}</span></div>;
 
@@ -109,6 +111,9 @@ function ProfileTab({ e }: { e: any }) {
   const [v, setV] = useState<any>(init);
   useEffect(() => setV(init()), [secret, e]); // eslint-disable-line react-hooks/exhaustive-deps
   const [pw, setPw] = useState({ next: '', again: '', mustChange: true });
+  const [roles, setRoles] = useState<Role[] | null>(null);
+  useEffect(() => { if (login?.roles) setRoles(login.roles); }, [login]);
+  const saveRoles = useAct(() => put(`/users/${login.id}/roles`, { roles }), { success: 'Roles saved — they will sign in again', invalidate: [['users']], onDone: () => refetch() });
   const f = (k: string, label: string, props: any = {}) => <Field label={label}><Input value={v[k] ?? ''} onChange={(x) => setV({ ...v, [k]: props.upper ? x.target.value.toUpperCase() : x.target.value })} {...props} upper={undefined} /></Field>;
 
   const save = useAct(() => {
@@ -170,6 +175,11 @@ function ProfileTab({ e }: { e: any }) {
           </div>
           <p className="text-xs text-muted">Changing the password signs the employee out everywhere. Every change is logged.</p>
         </div>
+        {login?.exists && roles && <div className="mt-5 border-t border-line pt-4">
+          <p className="mb-2 text-xs font-bold uppercase text-muted">Role</p>
+          <RoleChecks value={roles} onChange={setRoles} />
+          <Button className="mt-3" size="sm" disabled={!roles.length || JSON.stringify([...roles].sort()) === JSON.stringify([...login.roles].sort())} loading={saveRoles.isPending} onClick={() => saveRoles.mutate()}>Save role</Button>
+        </div>}
       </Card>
     </Stagger>
   );

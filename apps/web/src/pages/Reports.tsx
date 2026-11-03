@@ -28,7 +28,8 @@ export default function Reports() {
   const csv = () => {
     if (!rep) return;
     const esc = (v: unknown) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const text = [rep.columns.map((c) => esc(c.label)).join(','), ...rep.rows.map((r) => rep.columns.map((c) => esc(r[c.key] ?? (c.money ? 0 : ''))).join(','))].join('\n');
+    const cols = rep.columns.filter((c) => !c.key.startsWith('_'));
+    const text = [cols.map((c) => esc(c.label)).join(','), ...rep.rows.map((r) => cols.map((c) => esc(r[c.key] ?? (c.money ? 0 : ''))).join(','))].join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([`﻿${text}`], { type: 'text/csv;charset=utf-8' }));
     a.download = `${key}-${month}.csv`; a.click(); URL.revokeObjectURL(a.href);
@@ -55,7 +56,9 @@ export default function Reports() {
           <motion.div key={key + qs} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="overflow-x-auto p-2 sm:p-3">
             {error ? <p className="p-4 text-sm text-bad">{(error as Error).message}</p> : isLoading || !rep ? <Skeleton className="h-80" /> : (
               <DataTable rows={rows} keyOf={(r) => rows.indexOf(r).toString()} empty={<EmptyState icon={<FileSpreadsheet className="h-7 w-7" />} title="Nothing to show" sub="No data for this report and period." />}
-                cols={rep.columns.map((c) => ({ h: c.label, className: c.money ? 'text-right whitespace-nowrap' : 'whitespace-nowrap', cell: (r: Record<string, any>) => c.money ? <span className="tabular-nums">{inr(Number(r[c.key] ?? 0))}</span> : <span>{String(r[c.key] ?? '')}</span> }))} />
+                cols={rep.columns.map((c) => ({ h: c.label, className: c.money ? 'text-right whitespace-nowrap' : 'whitespace-nowrap', cell: (r: Record<string, any>) => c.key === '_slip'
+                  ? <span className="flex gap-1.5"><Button size="sm" variant="secondary" onClick={() => window.open(`${r._slip}?view=1`, '_blank', 'noopener')}>View</Button><Button size="sm" onClick={() => window.open(r._slip, '_blank', 'noopener')}>Download</Button></span>
+                  : c.money ? <span className="tabular-nums">{inr(Number(r[c.key] ?? 0))}</span> : <span>{String(r[c.key] ?? '')}</span> }))} />
             )}
             {rep && rep.rows.length > 0 && <p className="px-2 pt-2 text-xs text-muted">{rows.length} of {rep.rows.length} rows</p>}
           </motion.div>

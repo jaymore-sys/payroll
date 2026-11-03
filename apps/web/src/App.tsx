@@ -11,7 +11,7 @@ const pages = {
   Dashboard: () => import('./pages/Dashboard'), Employees: () => import('./pages/Employees'), EmployeeDetail: () => import('./pages/EmployeeDetail'),
   Attendance: () => import('./pages/Attendance'), Approvals: () => import('./pages/Approvals'), TaxCalculator: () => import('./pages/TaxCalculator'),
   CtcBuilder: () => import('./pages/CtcBuilder'), Settings: () => import('./pages/Settings'),
-  Users: () => import('./pages/Users'), Payroll: () => import('./pages/Payroll'), PayrollRun: () => import('./pages/PayrollRun'), Payslips: () => import('./pages/Payslips'), Consultants: () => import('./pages/Consultants'), Reports: () => import('./pages/Reports'), PayslipPrint: () => import('./pages/PayslipPrint'), Audit: () => import('./pages/Audit'), Profile: () => import('./pages/Profile'), NotFound: () => import('./pages/NotFound'),
+  Users: () => import('./pages/Users'), Payroll: () => import('./pages/Payroll'), PayrollRun: () => import('./pages/PayrollRun'), Payslips: () => import('./pages/Payslips'), Consultants: () => import('./pages/Consultants'), Reports: () => import('./pages/Reports'), PayslipPrint: () => import('./pages/PayslipPrint'), ConsultantSlipPrint: () => import('./pages/ConsultantSlipPrint'), Audit: () => import('./pages/Audit'), Profile: () => import('./pages/Profile'), NotFound: () => import('./pages/NotFound'),
 };
 const Login = lazy(() => import('./pages/Login'));
 const SetPassword = lazy(() => import('./pages/SetPassword'));
@@ -31,6 +31,7 @@ const Payroll = lazy(pages.Payroll);
 const PayrollRun = lazy(pages.PayrollRun);
 const Payslips = lazy(pages.Payslips);
 const PayslipPrint = lazy(pages.PayslipPrint);
+const ConsultantSlipPrint = lazy(pages.ConsultantSlipPrint);
 const Consultants = lazy(pages.Consultants);
 const Reports = lazy(pages.Reports);
 
@@ -79,6 +80,7 @@ export default function App() {
             <Routes>
               <Route path="login" element={<Navigate to="/" replace />} />
               <Route path="payslips/:id/print" element={<PayslipPrint />} />
+              <Route path="consultant-payments/:id/print" element={<Guard roles={ADM}><ConsultantSlipPrint /></Guard>} />
               <Route element={<AppLayout />}>
                 <Route index element={<Suspense fallback={<PageSkeleton />}><Dashboard /></Suspense>} />
                 <Route path="employees" element={<Guard roles={[...ADM, 'REPORTING_MANAGER']}><Suspense fallback={<PageSkeleton />}><Employees /></Suspense></Guard>} />

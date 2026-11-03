@@ -28,8 +28,8 @@ describe('consultants', () => {
   it('adds consultants with masked PAN and bank', async () => {
     const r = await as('payroll').post('/consultants', { name: 'Neha Consultant', pan: 'abcpn1234k', bank: { account: '001234567890', ifsc: 'hdfc0001234' }, monthlyFee: 60000, startDate: '2026-04-01' });
     expect(r.status).toBe(201);
-    expect(r.body).toMatchObject({ panLast4: '234K', bankLast4: '7890', tdsRate: 0.1 });
-    expect(JSON.stringify(r.body)).not.toMatch(/ABCPN1234K|001234567890/);
+    expect(r.body).toMatchObject({ pan: 'ABCPN1234K', bankLast4: '7890', tdsRate: 0.1 });
+    expect(JSON.stringify(r.body)).not.toMatch(/001234567890/);
     a = r.body.id;
     b = (await as('payroll').post('/consultants', { name: 'Small Fee', monthlyFee: 3000, startDate: '2026-04-01' })).body.id; // no PAN, under ₹50k a year
     expect((await as('employee').get('/consultants')).status).toBe(403);
@@ -68,5 +68,9 @@ describe('consultants', () => {
     const wb = new ExcelJS.Workbook(); await wb.xlsx.load(x.body);
     expect(wb.worksheets.map((w) => w.name)).toEqual(['Consultant payments', 'Bank transfer', 'TDS']);
     expect(String(wb.getWorksheet('Bank transfer')!.getCell('C4').value)).toBe('001234567890');
+    const slips = await as('payroll').get(`/reports/payslips?month=${month}`);
+    const row = slips.body.rows.find((r: { type: string }) => r.type === 'Consultant');
+    const slip = await as('payroll').get(`/consultant-payments/${row._slip.split('/')[2]}`);
+    expect(slip.body).toMatchObject({ consultant: { name: 'Neha Consultant', pan: 'ABCPN1234K' }, amount: 54000, tds: 5400, net: 48600 });
   });
 });

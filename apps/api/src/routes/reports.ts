@@ -148,9 +148,9 @@ const REPORTS: Record<string, { title: string; group: string; desc: string; peri
     async build({ cid, month }) {
       const rows = (await slips(cid, month)).filter(({ slip }) => !slip.hold && (slip.detail as Payslip).deductions.pf > 0);
       return { title: `Provident Fund — ${label(month)}`, sub: await runNote(cid, month),
-        columns: [c('uan', 'UAN'), c('code', 'Emp Id'), c('name', 'Member name'), c('gross', 'Gross wages', true), c('epfWage', 'EPF wages', true), c('epsWage', 'EPS wages', true), c('edliWage', 'EDLI wages', true), c('ee', 'EPF contribution (EE)', true), c('eps', 'EPS contribution', true), c('er', 'EPF-EPS difference (ER)', true), c('ncp', 'NCP days'), c('edli', 'EDLI', true), c('admin', 'Admin charges', true)],
+        columns: [c('uan', 'UAN'), c('code', 'Emp Id'), c('name', 'Member name'), c('gross', 'Gross wages', true), c('epfWage', 'EPF wages', true), c('epsWage', 'EPS wages', true), c('edliWage', 'EDLI wages', true), c('ee', 'EPF contribution (EE)', true), c('eps', 'EPS contribution', true), c('er', 'EPF-EPS difference (ER)', true), c('ncp', 'NCP days'), c('edli', 'EDLI', true)],
         rows: rows.map(({ slip, e }) => { const p = slip.detail as Payslip; const epsWage = p.employer.eps ? Math.min(p.pfWage, 15000) : 0;
-          return { uan: e.uan ?? '', code: e.code, name: name(e), gross: p.gross, epfWage: p.pfWage, epsWage, edliWage: Math.min(p.pfWage, 15000), ee: p.deductions.pf, eps: p.employer.eps, er: p.employer.epf, ncp: p.lopDays, edli: p.employer.edli, admin: p.employer.admin }; }) };
+          return { uan: e.uan ?? '', code: e.code, name: name(e), gross: p.gross, epfWage: p.pfWage, epsWage, edliWage: Math.min(p.pfWage, 15000), ee: p.deductions.pf, eps: p.employer.eps, er: p.employer.epf, ncp: p.lopDays, edli: p.employer.edli }; }) };
     },
   },
   'esi': {
@@ -194,11 +194,73 @@ const REPORTS: Record<string, { title: string; group: string; desc: string; peri
     },
   },
   'tax-computation': {
-    title: 'Tax Computation Report', group: 'Tax', period: 'month', desc: 'Projected taxable income, tax for the year and TDS so far, per employee',
+    title: 'Tax Computation Report', group: 'Tax', period: 'month', desc: 'Each employee’s yearly income by component, exemptions, deductions, tax and TDS — RazorpayX columns',
     async build({ cid, month }) {
-      const rows = await slips(cid, month);
-      return { title: `Tax Computation — ${label(month)}`, columns: [c('pan', 'PAN'), c('code', 'Emp Id'), c('name', 'Name'), c('regime', 'Regime'), c('projected', 'Projected taxable income', true), c('annualTax', 'Tax for the year', true), c('paid', 'Deducted before this month', true), c('thisMonth', 'TDS this month', true), c('balance', 'Balance for the year', true)],
-        rows: rows.filter(({ e }) => e.employmentType !== 'intern').map(({ slip, e }) => { const t = (slip.detail as Payslip).tax; return { pan: pan(e.panEnc), code: e.code, name: name(e), regime: t.regime, projected: t.projectedTaxable, annualTax: t.annualTax, paid: t.paidSoFar, thisMonth: t.thisMonth, balance: Math.max(0, t.annualTax - t.paidSoFar - t.thisMonth) }; }) };
+      const fy = fyMonths(month);
+      const all = await slips(cid, fy.from, month);
+      const by = new Map<string, typeof all>();
+      for (const r of all) by.set(r.e.id, [...(by.get(r.e.id) ?? []), r]);
+      const comps: string[] = [];
+      const items = [...by.values()].map((list) => {
+        const last = list[list.length - 1], p = last.slip.detail as Payslip, t = p.tax, e = last.e;
+        const yearly = t.yearly?.length ? t.yearly : Object.entries(list.reduce((a, { slip }) => { for (const x of (slip.detail as Payslip).earnings) a[x.name] = (a[x.name] ?? 0) + x.amount; return a; }, {} as Record<string, number>))
+          .map(([name, g]) => ({ name, gross: g, exempt: 0, taxable: g }));
+        for (const y of yearly) if (!comps.includes(y.name)) comps.push(y.name);
+        return { last, p, t, e, yearly, list };
+      });
+      const w = (t: Payslip['tax'], l: string) => t.worksheet.find((x) => x.label.startsWith(l))?.amount ?? 0;
+      const num = (k: string, l: string) => c(k, l, true);
+      return {
+        title: `Tax Computation Report — ${fy.label} (up to ${label(month)})`,
+        sub: 'Income = paid so far this financial year + projected for the rest of the year at the current salary',
+        columns: [
+          c('id', 'Employee ID'), c('name', 'Name'), c('email', 'Email'), c('pan', 'PAN'), c('doj', 'Date of Joining'), c('dol', 'Date of Leaving'), c('lastMonth', 'Last Finalized Payroll Month'), c('regime', 'Tax Regime'),
+          ...comps.map((n) => num(`g_${n}`, n)),
+          num('perq', 'Total Perquisites'), num('pastPrev', 'Past Taxable Income (Previous Employer)'), num('pastCur', 'Past Taxable Income (Current Employer)'), num('grossIncome', 'Gross Income'),
+          ...comps.map((n) => num(`x_${n}`, `${n} Exemption`)),
+          num('flex', 'Flexible Benefits Exemption (Section 10)'), num('curPastEx', 'Current Employer Past Exemption'), num('grossTaxable', 'Gross Taxable Income'),
+          num('s80d', 'Section 80D Exemption'), num('s80tta', 'Section 80TTA Exemption'), num('s80ccd1b', 'Section 80CCD(1B) Exemption'), num('s80ccd2', 'Section 80CCD(2) Exemption'), num('s80c', 'Section 80C Exemption'),
+          num('s80e', 'Section 80E Exemption'), num('s80g', 'Section 80G Exemption'), num('s80other', 'Other Section 80 Exemptions'), num('via', 'Total Deductions under Chapter VI-A'),
+          num('s24', 'Section 24 Exemption'), num('ptEx', 'PT Exemption'), num('std', 'Standard Deduction'), num('netTaxable', 'Net Taxable Income'),
+          num('slab', 'Tax on Taxable Income'), num('rebate', 'Tax Rebate u/s 87a'), num('surcharge', 'Surcharge'), num('cess', 'Education Cess'), num('netTax', 'Net Tax Payable'),
+          num('prevTds', 'Previous Employer TDS'), num('curPastTds', 'Current Employer Past TDS'), num('paidPayroll', 'TDS Paid On Valencia Payroll'), num('totalTds', 'Total TDS Paid'), num('pending', 'TDS Pending'), num('excess', 'Excess TDS Paid'),
+        ],
+        rows: items.map(({ last, t, e, yearly, list }) => {
+          const finalised = list.filter((x) => x.status === 'FINALISED');
+          const paidPayroll = finalised.reduce((a, x) => a + Number(x.slip.tds), 0);
+          const paidBefore = finalised.filter((x) => x.slip.month < last.slip.month).reduce((a, x) => a + Number(x.slip.tds), 0);
+          const curPastTds = Math.max(0, (t.currentEmployerPastTds ?? 0) - paidBefore);
+          const prevTds = t.prevEmployer?.tds ?? 0, prevInc = t.prevEmployer?.taxable ?? 0;
+          const gross = yearly.reduce((a, y) => a + y.gross, 0) + prevInc, exempt = yearly.reduce((a, y) => a + y.exempt, 0);
+          const via = w(t, '80C') + w(t, '80D') + w(t, '80CCD(1B)') + w(t, 'Employer NPS');
+          const netTax = t.annualTax ?? 0, totalTds = prevTds + curPastTds + paidPayroll;
+          return {
+            id: e.code, name: name(e), email: e.workEmail, pan: pan(e.panEnc), doj: e.doj, dol: e.lastWorkingDay ?? '', lastMonth: finalised.length ? `${finalised[finalised.length - 1].slip.month}-01` : '', regime: t.regime === 'old' ? 'Old' : 'New',
+            ...Object.fromEntries(yearly.map((y) => [`g_${y.name}`, y.gross])), ...Object.fromEntries(yearly.map((y) => [`x_${y.name}`, y.exempt])),
+            perq: 0, pastPrev: prevInc, pastCur: 0, grossIncome: gross, flex: 0, curPastEx: 0, grossTaxable: gross - exempt,
+            s80d: w(t, '80D'), s80tta: 0, s80ccd1b: w(t, '80CCD(1B)'), s80ccd2: w(t, 'Employer NPS'), s80c: w(t, '80C'), s80e: 0, s80g: 0, s80other: 0, via,
+            s24: w(t, 'Home loan'), ptEx: w(t, 'Professional tax'), std: w(t, 'Standard deduction'), netTaxable: w(t, 'Taxable income'),
+            slab: w(t, 'Slab tax'), rebate: -w(t, 'Rebate 87A'), surcharge: w(t, 'Surcharge'), cess: w(t, 'Health & education cess'), netTax,
+            prevTds, curPastTds, paidPayroll, totalTds, pending: Math.max(0, netTax - totalTds), excess: Math.max(0, totalTds - netTax),
+          };
+        }),
+      };
+    },
+  },
+  'payslips': {
+    title: 'Payslips', group: 'Payroll', period: 'month', desc: 'View or download the payslip of any employee or consultant for the month',
+    async build({ cid, month }) {
+      const emp = await slips(cid, month);
+      const CP = schema.consultantPayments, CR = schema.consultantRuns, C = schema.consultants;
+      const cons = await db.select({ p: CP, c: C }).from(CP).innerJoin(CR, eq(CR.id, CP.runId)).innerJoin(C, eq(C.id, CP.consultantId)).where(and(eq(CR.companyId, cid), eq(CR.month, month))).orderBy(asc(C.name));
+      return {
+        title: `Payslips — ${label(month)}`, sub: `${await runNote(cid, month)} · click View to open, Download to save as PDF`,
+        columns: [c('code', 'Code'), c('name', 'Name'), c('_slip', 'Payslip'), c('type', 'Type'), c('gross', 'Gross', true), c('net', 'Net pay', true), c('status', 'Status')],
+        rows: [
+          ...emp.map(({ slip, e, status }) => ({ code: e.code, name: name(e), type: e.employmentType === 'intern' ? 'Intern' : 'Employee', gross: Number(slip.gross), net: Number(slip.net), status: slip.hold ? 'On hold' : status === 'FINALISED' ? 'Approved' : 'Not approved', _slip: `/payslips/${slip.id}/print` })),
+          ...cons.map(({ p, c: k }) => ({ code: k.code ?? '', name: k.name, type: 'Consultant', gross: Number(p.amount), net: Number(p.net), status: '', _slip: `/consultant-payments/${p.id}/print` })),
+        ],
+      };
     },
   },
   'pf-registration': {
@@ -243,6 +305,7 @@ reportsRouter.get('/reports/:key', requireRole('COMPANY_ADMIN', 'PAYROLL_MANAGER
   const month = q.month ?? new Date().toISOString().slice(0, 7);
   const rep = await def.build({ cid: req.user!.cid, month, showSkipped: q.showSkipped === '1' });
   if (q.format === 'json') return res.json(rep);
+  rep.columns = rep.columns.filter((x) => !x.key.startsWith('_')); // links are for the screen only
 
   await audit(req, 'export_report', 'report', req.params.key, undefined, { month, rows: rep.rows.length });
   const [company] = await db.select().from(schema.companies).where(eq(schema.companies.id, req.user!.cid));

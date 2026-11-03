@@ -29,6 +29,27 @@ const ARGON = { memoryCost: 19456, timeCost: 2, parallelism: 1 };
 export const hashPassword = (p: string) => hash(p, ARGON);
 /** Every new or reset login starts with this password and must choose its own at first sign-in. */
 export const DEFAULT_PASSWORD = 'Valencia123';
+
+/**
+ * Make sure an employee can sign in: creates a login with the default password, or links an existing unlinked login
+ * with the same email (its password is kept). Returns null when the email already belongs to someone else.
+ */
+export async function ensureLogin(cid: string, employeeId: string, email: string, link = true): Promise<'created' | 'linked' | 'exists' | null> {
+  const { db, schema } = await import('../db');
+  const { eq, sql } = await import('drizzle-orm');
+  const U = schema.users;
+  const mail = email.trim().toLowerCase();
+  const [byEmp] = await db.select({ id: U.id }).from(U).where(eq(U.employeeId, employeeId));
+  if (byEmp) return 'exists';
+  const [byMail] = await db.select().from(U).where(eq(U.email, mail));
+  if (byMail) {
+    if (byMail.companyId !== cid || byMail.employeeId || !link) return null;
+    await db.update(U).set({ employeeId, tokenVersion: sql`${U.tokenVersion} + 1` }).where(eq(U.id, byMail.id));
+    return 'linked';
+  }
+  await db.insert(U).values({ companyId: cid, email: mail, passwordHash: await hashPassword(DEFAULT_PASSWORD), roles: ['EMPLOYEE'], employeeId, mustChangePassword: true });
+  return 'created';
+}
 export const verifyPassword = (hashed: string, p: string) => verify(hashed, p).catch(() => false);
 
 /** Verifies the access token AND that the user is still active with the same token version (so password change / deactivation revokes at once). */

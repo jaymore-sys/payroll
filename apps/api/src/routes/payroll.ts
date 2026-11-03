@@ -178,6 +178,7 @@ payrollRouter.post('/payroll-runs/:id/calculate', requireRole(...ADMIN), h(async
     .from(P).innerJoin(R, eq(R.id, P.runId))
     .where(and(eq(P.companyId, cid), eq(R.status, 'FINALISED'), gte(P.month, fyStart(run.month)), lt(P.month, run.month))).groupBy(P.employeeId);
   const ytd = new Map(ytdRows.map((r) => [r.emp, r]));
+  const ytdComponents = await componentsPaid(cid, fyStart(run.month), run.month);
 
   const slips: (typeof P.$inferInsert)[] = [];
   const errors: { employeeId: string; message: string }[] = [];
@@ -199,7 +200,7 @@ payrollRouter.post('/payroll-runs/:id/calculate', requireRole(...ADMIN), h(async
         payableDaysMethod: company.payableDaysMethod as 'calendar' | 'fixed30' | 'working',
         lopDays: Number(att.get(e.id)?.lopDays ?? inp.lopDays), bonus: Number(inp.bonus), arrears: Number(inp.arrears), otherEarnings: Number(inp.otherEarnings), otherDeductions: Number(inp.otherDeductions),
         intern: e.employmentType === 'intern',
-        ytd: ytd.get(e.id) ?? undefined,
+        ytd: ytd.get(e.id) ?? undefined, ytdComponents: ytdComponents.get(e.id),
       }, stat, tax);
       slips.push({
         companyId: cid, runId: run.id, employeeId: e.id, month: run.month, structureId: s.id, payableDays: String(p.payableDays), lopDays: String(p.lopDays),
@@ -278,14 +279,48 @@ payrollRouter.get('/payslips', h(async (req, res) => {
     .where(and(eq(P.companyId, req.user!.cid), eq(P.employeeId, eid), eq(R.status, 'FINALISED'))).orderBy(desc(P.month));
   res.json(rows.map((r) => ({ ...r, label: monthLabel(r.month), fyMonth: fyMonth(r.month) })));
 }));
+/** Earnings by component name from finalised payslips in [from, before) — for the yearly taxable income table. */
+async function componentsPaid(cid: string, from: string, before: string, employeeId?: string) {
+  const rows = await db.select({ emp: P.employeeId, detail: P.detail }).from(P).innerJoin(R, eq(R.id, P.runId))
+    .where(and(eq(P.companyId, cid), eq(R.status, 'FINALISED'), gte(P.month, from), lt(P.month, before), ...(employeeId ? [eq(P.employeeId, employeeId)] : [])));
+  const out = new Map<string, Record<string, number>>();
+  for (const { emp, detail } of rows) {
+    const d = detail as Payslip, t = out.get(emp) ?? {};
+    for (const e of d.earnings) t[e.name] = (t[e.name] ?? 0) + e.amount;
+    const a = d.adjustments ?? { bonus: 0, arrears: 0, other: 0 };
+    for (const [k, v] of [['Bonus', a.bonus], ['Arrear', a.arrears], ['Other earnings', a.other]] as const) if (v) t[k] = (t[k] ?? 0) + v;
+    out.set(emp, t);
+  }
+  return out;
+}
+
+/** TDS for every month of the payslip's financial year: deducted (finalised months and this one) or projected (marked). */
+async function monthlyTax(cid: string, employeeId: string, month: string, slip: Payslip) {
+  const from = fyStart(month), y = Number(from.slice(0, 4));
+  const done = new Map((await db.select({ m: P.month, tds: P.tds }).from(P).innerJoin(R, eq(R.id, P.runId))
+    .where(and(eq(P.companyId, cid), eq(P.employeeId, employeeId), eq(R.status, 'FINALISED'), gte(P.month, from), lt(P.month, month)))).map((r) => [r.m, Number(r.tds)]));
+  return Array.from({ length: 12 }, (_, k) => {
+    const d = new Date(Date.UTC(y, 3 + k, 1)), m = d.toISOString().slice(0, 7);
+    const label = d.toLocaleString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    if (m < month) return { month: m, label, amount: done.get(m) ?? 0, projected: false };
+    if (m === month) return { month: m, label, amount: slip.deductions.tds, projected: false };
+    return { month: m, label, amount: slip.tax.future ?? 0, projected: true };
+  });
+}
+export { componentsPaid, monthlyTax };
+
 payrollRouter.get('/payslips/:id', h(async (req, res) => {
   const [p] = await db.select({ slip: P, status: R.status }).from(P).innerJoin(R, eq(R.id, P.runId)).where(and(eq(P.companyId, req.user!.cid), eq(P.id, req.params.id)));
   if (!p) throw notFound('Payslip');
   const admin = hasRole(req.user, ...ADMIN);
   if (!admin && (p.slip.employeeId !== req.user!.eid || p.status !== 'FINALISED')) throw notFound('Payslip');
-  const [{ bankEnc, ...e }] = await db.select({ code: E.code, firstName: E.firstName, lastName: E.lastName, panLast4: E.panLast4, uan: E.uan, bankLast4: E.bankLast4, bankEnc: E.bankEnc, doj: E.doj, dob: E.dob, taxRegime: E.taxRegime, designation: schema.designations.name, department: schema.departments.name })
+  const [{ bankEnc, panEnc, ...e }] = await db.select({ code: E.code, firstName: E.firstName, lastName: E.lastName, panEnc: E.panEnc, uan: E.uan, bankEnc: E.bankEnc, doj: E.doj, dob: E.dob, taxRegime: E.taxRegime, employmentType: E.employmentType, designation: schema.designations.name, department: schema.departments.name })
     .from(E).leftJoin(schema.designations, eq(schema.designations.id, E.designationId)).leftJoin(schema.departments, eq(schema.departments.id, E.departmentId)).where(eq(E.id, p.slip.employeeId));
   const [c] = await db.select({ name: schema.companies.legalName, display: schema.companies.name, address: schema.companies.address }).from(schema.companies).where(eq(schema.companies.id, req.user!.cid));
-  const ifsc = bankEnc ? decryptJson<{ ifsc: string }>(bankEnc).ifsc : null; // IFSC only; account and PAN stay masked
-  res.json({ id: p.slip.id, month: p.slip.month, label: monthLabel(p.slip.month), status: p.status, employee: { ...e, ifsc }, company: { name: c.name ?? c.display, address: c.address }, payslip: p.slip.detail });
+  const bank = bankEnc ? decryptJson<{ ifsc: string; account: string }>(bankEnc) : null; // shown in full, like the RazorpayX payslip
+  const slip = p.slip.detail as Payslip;
+  res.json({ id: p.slip.id, month: p.slip.month, label: monthLabel(p.slip.month), status: p.status,
+    employee: { ...e, pan: panEnc ? decrypt(panEnc) : null, account: bank?.account ?? null, ifsc: bank?.ifsc ?? null },
+    company: { name: c.name ?? c.display, address: c.address }, payslip: slip,
+    monthlyTax: e.employmentType === 'intern' ? [] : await monthlyTax(req.user!.cid, p.slip.employeeId, p.slip.month, slip) });
 }));

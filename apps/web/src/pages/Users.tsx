@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { Copy, KeyRound, Lock, ShieldCheck, UserPlus } from 'lucide-react';
-import { useState } from 'react';
+import { Copy, KeyRound, Lock, Search, ShieldCheck, UserPlus } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Avatar, Badge, Button, Card, DataTable, Field, Input, Modal, PageHeader, Select, Skeleton, Switch } from '../components/ui';
 import { get, post, put } from '../lib/api';
@@ -9,15 +9,15 @@ import { dateTime, roleLabel } from '../lib/format';
 import { useAct } from '../lib/hooks';
 
 const ROLES: Role[] = ['COMPANY_ADMIN', 'PAYROLL_MANAGER', 'REPORTING_MANAGER', 'EMPLOYEE'];
-const RoleChecks = ({ value, onChange }: { value: Role[]; onChange: (r: Role[]) => void }) => (
+export const RoleChecks = ({ value, onChange }: { value: Role[]; onChange: (r: Role[]) => void }) => (
   <div className="grid grid-cols-2 gap-2">{ROLES.map((r) => (
     <label key={r} className="flex cursor-pointer items-center gap-2 rounded-xl border border-line p-2.5 text-sm has-[:checked]:border-brand has-[:checked]:bg-brand-soft">
       <input type="checkbox" className="accent-[rgb(var(--brand))]" checked={value.includes(r)} onChange={(e) => onChange(e.target.checked ? [...value, r] : value.filter((x) => x !== r))} />{roleLabel[r]}
     </label>))}</div>
 );
 const Secret = ({ pw, onClose }: { pw: string | null; onClose: () => void }) => (
-  <Modal open={!!pw} onClose={onClose} title="Temporary password" footer={<Button onClick={onClose}>Done</Button>}>
-    <p className="text-sm text-muted">Shown only once. Share it over a secure channel and ask the user to change it after signing in.</p>
+  <Modal open={!!pw} onClose={onClose} title="Default password" footer={<Button onClick={onClose}>Done</Button>}>
+    <p className="text-sm text-muted">The user signs in with this password and must choose their own straight away.</p>
     <div className="mt-3 flex items-center justify-between rounded-xl bg-surface-2 px-3 py-2.5 font-mono"><span>{pw}</span><button onClick={() => { navigator.clipboard.writeText(pw!); toast.success('Copied'); }} aria-label="Copy"><Copy className="h-4 w-4" /></button></div>
   </Modal>
 );
@@ -29,6 +29,9 @@ export default function Users() {
   const [adding, setAdding] = useState(false);
   const [nu, setNu] = useState<{ email: string; roles: Role[]; employeeId: string }>({ email: '', roles: ['EMPLOYEE'], employeeId: '' });
   const [pw, setPw] = useState<string | null>(null);
+  const [q, setQ] = useState('');
+  const [role, setRole] = useState<Role | ''>('');
+  const rows = useMemo(() => (data ?? []).filter((r) => (!role || r.roles.includes(role)) && (!q || `${r.name ?? ''} ${r.email}`.toLowerCase().includes(q.toLowerCase()))), [data, q, role]);
   const { data: emps } = useQuery<any>({ queryKey: ['employees', 'all-min'], queryFn: () => get('/employees?limit=200&sort=name'), enabled: adding });
   const saveRoles = useAct(() => put(`/users/${editing.id}/roles`, { roles: editing.roles }), { success: 'Roles updated — user must sign in again', invalidate: [['users']], onDone: () => setEditing(null) });
   const toggle = useAct(({ id, active }: { id: string; active: boolean }) => put(`/users/${id}/active`, { active }), { success: 'Updated', invalidate: [['users']] });
@@ -38,8 +41,13 @@ export default function Users() {
     <>
       <PageHeader title="Users & roles" sub="Permissions are enforced on the server for every request" actions={<Button icon={<UserPlus className="h-4 w-4" />} onClick={() => setAdding(true)}>Invite user</Button>} />
       <Card hover={false} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+          <div className="relative flex-1"><Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name or email" className="pl-10" /></div>
+          <Select value={role} onChange={(e) => setRole(e.target.value as Role | '')} className="sm:w-56"><option value="">All roles</option>{ROLES.map((r) => <option key={r} value={r}>{roleLabel[r]}</option>)}</Select>
+        </div>
+        {data && <p className="mb-2 text-xs text-muted">{rows.length} of {data.length} users</p>}
         {!data ? <Skeleton className="h-60" /> : (
-          <DataTable rows={data} keyOf={(r: any) => r.id}
+          <DataTable rows={rows} keyOf={(r: any) => r.id}
             cols={[
               { h: 'User', cell: (r: any) => <div className="flex items-center gap-3"><Avatar name={r.name ?? r.email} size="sm" /><div className="min-w-0"><p className="truncate font-semibold">{r.name ?? '—'}</p><p className="truncate text-xs text-muted">{r.email}</p></div></div> },
               { h: 'Roles', cell: (r: any) => <div className="flex flex-wrap justify-end gap-1 md:justify-start">{r.roles.map((x: Role) => <Badge key={x} tone={x === 'COMPANY_ADMIN' ? 'brand' : 'gray'}>{roleLabel[x]}</Badge>)}</div> },
