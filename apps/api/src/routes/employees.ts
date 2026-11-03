@@ -8,6 +8,7 @@ import { employeeAccess, notifyUsersOfEmployees, teamIds, type Access } from '..
 import { canSeePay, DEFAULT_PASSWORD, hashPassword, hasRole, requireRole } from '../lib/auth';
 import { decrypt, decryptJson, encrypt, encryptJson, mask } from '../lib/crypto';
 import { needsRecalc } from '../lib/runs';
+import { passwordSchema } from './auth';
 import { ApiError, forbidden, h, notFound, page, parse } from '../lib/http';
 import { loadRules } from '../lib/rules';
 
@@ -120,6 +121,40 @@ employeesRouter.get('/employees/:id/sensitive', h(async (req, res) => {
   res.set('Cache-Control', 'no-store').json({ pan: e.panEnc ? decrypt(e.panEnc) : null, bank: e.bankEnc ? decryptJson(e.bankEnc) : null });
 }));
 
+/* ---------------- employee's login (Company Admin) ---------------- */
+const loginOf = async (cid: string, empId: string) => {
+  const [e] = await db.select({ id: E.id, workEmail: E.workEmail }).from(E).where(and(eq(E.companyId, cid), eq(E.id, empId)));
+  if (!e) throw notFound('Employee');
+  const U = schema.users;
+  const [u] = await db.select().from(U).where(and(eq(U.companyId, cid), or(eq(U.employeeId, e.id), eq(U.email, e.workEmail))!)).limit(1);
+  return { e, u };
+};
+employeesRouter.get('/employees/:id/login', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
+  const { e, u } = await loginOf(req.user!.cid, req.params.id);
+  res.json(u ? { exists: true, email: u.email, active: u.active, lastLoginAt: u.lastLoginAt, mustChangePassword: u.mustChangePassword, locked: !!u.lockedUntil && u.lockedUntil > new Date() }
+    : { exists: false, email: e.workEmail });
+}));
+/** Admin sets (or resets to the default) an employee's login password; creates the login if there is none. */
+employeesRouter.post('/employees/:id/login-password', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
+  const d = parse(z.object({ password: passwordSchema.optional(), resetToDefault: z.boolean().default(false), mustChange: z.boolean().default(true) })
+    .refine((x) => x.resetToDefault || x.password, 'Enter a new password'), req.body);
+  const cid = req.user!.cid, U = schema.users;
+  const { e, u } = await loginOf(cid, req.params.id);
+  if (u?.id === req.user!.sub) throw new ApiError(400, 'self', 'Change your own password from My profile');
+  const pw = d.resetToDefault ? DEFAULT_PASSWORD : d.password!;
+  const set = { passwordHash: await hashPassword(pw), mustChangePassword: d.resetToDefault || d.mustChange, failedLogins: 0, lockedUntil: null, active: true };
+  let userId: string;
+  if (u) {
+    await db.update(U).set({ ...set, employeeId: e.id, tokenVersion: sql`${U.tokenVersion} + 1` }).where(eq(U.id, u.id));
+    await db.update(schema.refreshTokens).set({ revokedAt: new Date() }).where(and(eq(schema.refreshTokens.userId, u.id), isNull(schema.refreshTokens.revokedAt)));
+    userId = u.id;
+  } else {
+    [{ id: userId }] = await insertReturning(U, { ...set, companyId: cid, email: e.workEmail, roles: ['EMPLOYEE'], employeeId: e.id });
+  }
+  await audit(req, u ? 'password_set_by_admin' : 'login_created', 'user', userId, undefined, { employeeId: e.id, mustChange: set.mustChangePassword });
+  res.json({ ok: true, created: !u, email: u?.email ?? e.workEmail, mustChangePassword: set.mustChangePassword });
+}));
+
 /* ---------------- create / update ---------------- */
 async function nextCode(cid: string) {
   // Skip codes already taken (e.g. employees imported with their RazorpayX IDs).
@@ -220,6 +255,8 @@ employeesRouter.put('/employees/:id', requireRole('COMPANY_ADMIN', 'PAYROLL_MANA
     const [first] = await db.select().from(S).where(eq(S.employeeId, before.id)).orderBy(asc(S.effectiveFrom)).limit(1);
     if (first && first.effectiveFrom === before.doj) await db.update(S).set({ effectiveFrom: d.doj }).where(eq(S.id, first.id));
   }
+  // The login follows the work email.
+  if (d.workEmail && d.workEmail !== before.workEmail) await db.update(schema.users).set({ email: d.workEmail }).where(and(eq(schema.users.companyId, cid), eq(schema.users.employeeId, before.id)));
   await needsRecalc(cid);
   const changed = Object.keys(d);
   await audit(req, 'update', 'employee', before.id, { fields: changed, panLast4: before.panLast4, bankLast4: before.bankLast4 }, { fields: changed, panLast4: after.panLast4, bankLast4: after.bankLast4 });

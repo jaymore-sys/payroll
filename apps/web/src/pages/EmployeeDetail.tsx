@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Briefcase, CalendarDays, Eye, EyeOff, History, IndianRupee, LogOut, Mail, MapPin, Pencil, Phone, ShieldAlert, TrendingUp, User } from 'lucide-react';
+import { ArrowLeft, Briefcase, CalendarDays, Eye, EyeOff, History, IndianRupee, KeyRound, LogOut, Mail, MapPin, Pencil, Phone, RotateCcw, Save, ShieldAlert, TrendingUp, User, UserCog } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Breakup from '../components/Breakup';
@@ -96,10 +96,89 @@ function ExitModal({ e, open, onClose }: { e: any; open: boolean; onClose: () =>
   );
 }
 
+/** Admin-only Profile tab: edit personal, statutory and bank details, and the employee's login password. */
+function ProfileTab({ e }: { e: any }) {
+  const { data: secret } = useQuery<any>({ queryKey: ['sensitive', e.id], queryFn: () => get(`/employees/${e.id}/sensitive`), staleTime: 0, gcTime: 0 });
+  const { data: login, refetch } = useQuery<any>({ queryKey: ['emp-login', e.id], queryFn: () => get(`/employees/${e.id}/login`) });
+  const init = (): Record<string, any> => ({
+    firstName: e.firstName ?? '', middleName: e.middleName ?? '', lastName: e.lastName ?? '', dob: e.dob ?? '', gender: e.gender ?? 'M', maritalStatus: e.maritalStatus ?? '',
+    mobile: e.mobile ?? '', personalEmail: e.personalEmail ?? '', workEmail: e.workEmail ?? '',
+    pan: secret?.pan ?? '', aadhaar: '', uan: e.uan ?? '', esiIp: e.esiIp ?? '',
+    holder: secret?.bank?.holder ?? `${e.firstName} ${e.lastName}`, account: secret?.bank?.account ?? '', ifsc: secret?.bank?.ifsc ?? '', bankName: secret?.bank?.bankName ?? '',
+  });
+  const [v, setV] = useState<any>(init);
+  useEffect(() => setV(init()), [secret, e]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [pw, setPw] = useState({ next: '', again: '', mustChange: true });
+  const f = (k: string, label: string, props: any = {}) => <Field label={label}><Input value={v[k] ?? ''} onChange={(x) => setV({ ...v, [k]: props.upper ? x.target.value.toUpperCase() : x.target.value })} {...props} upper={undefined} /></Field>;
+
+  const save = useAct(() => {
+    const o = init(), body: any = {};
+    for (const k of ['firstName', 'middleName', 'lastName', 'dob', 'gender', 'maritalStatus', 'mobile', 'personalEmail', 'workEmail', 'uan', 'esiIp'])
+      if (v[k] !== o[k]) body[k] = v[k] === '' ? null : v[k];
+    if (v.pan !== o.pan) body.pan = v.pan || null;
+    if (v.aadhaar) body.aadhaar = v.aadhaar;
+    if (['holder', 'account', 'ifsc', 'bankName'].some((k) => v[k] !== o[k])) body.bank = v.account ? { holder: v.holder, account: v.account, ifsc: v.ifsc, ...(v.bankName ? { bankName: v.bankName } : {}) } : null;
+    if (!Object.keys(body).length) return Promise.resolve();
+    return put(`/employees/${e.id}`, body);
+  }, { success: 'Profile saved', invalidate: [['employee', e.id], ['employees'], ['sensitive', e.id]] });
+  const setPassword = useAct((reset: boolean) => post(`/employees/${e.id}/login-password`, reset ? { resetToDefault: true } : { password: pw.next, mustChange: pw.mustChange }),
+    { success: 'Login password updated', onDone: () => { setPw({ next: '', again: '', mustChange: true }); refetch(); } });
+  const strong = pw.next.length >= 10 && /[a-z]/.test(pw.next) && /[A-Z]/.test(pw.next) && /\d/.test(pw.next);
+
+  return (
+    <Stagger className="grid gap-4 xl:grid-cols-[1fr_380px]">
+      <Card hover={false}>
+        <CardTitle sub="Changes are saved to the employee record and logged in History">Edit profile</CardTitle>
+        <p className="mb-2 mt-1 text-xs font-bold uppercase text-muted">Personal</p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {f('firstName', 'First name')}{f('middleName', 'Middle name')}{f('lastName', 'Last name')}
+          {f('dob', 'Date of birth', { type: 'date' })}
+          <Field label="Gender"><Select value={v.gender} onChange={(x) => setV({ ...v, gender: x.target.value })}><option value="M">Male</option><option value="F">Female</option><option value="O">Other</option></Select></Field>
+          {f('maritalStatus', 'Marital status')}
+          {f('mobile', 'Mobile', { inputMode: 'tel' })}{f('personalEmail', 'Personal email', { type: 'email' })}{f('workEmail', 'Work email (login)', { type: 'email' })}
+        </div>
+        <p className="mb-2 mt-5 text-xs font-bold uppercase text-muted">Statutory</p>
+        <div className="grid gap-3 sm:grid-cols-4">
+          {f('pan', 'PAN', { upper: true, placeholder: 'ABCDE1234F', className: 'font-mono' })}
+          {f('aadhaar', `Aadhaar${e.aadhaar ? ` (now ${e.aadhaar})` : ''}`, { inputMode: 'numeric', placeholder: 'Leave blank to keep' })}
+          {f('uan', 'UAN', { inputMode: 'numeric' })}{f('esiIp', 'ESI IP number', { inputMode: 'numeric' })}
+        </div>
+        <p className="mb-2 mt-5 text-xs font-bold uppercase text-muted">Bank</p>
+        <div className="grid gap-3 sm:grid-cols-4">
+          {f('holder', 'Account holder')}{f('account', 'Account number', { inputMode: 'numeric', className: 'font-mono' })}{f('ifsc', 'IFSC', { upper: true, className: 'font-mono' })}{f('bankName', 'Bank name')}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setV(init())}>Undo changes</Button>
+          <Button icon={<Save className="h-4 w-4" />} loading={save.isPending} onClick={() => save.mutate()}>Save profile</Button>
+        </div>
+      </Card>
+      <Card hover={false} className="h-fit">
+        <CardTitle sub={login ? (login.exists ? login.email : `No login yet — setting a password creates one for ${login.email}`) : undefined}>Login & password</CardTitle>
+        {login?.exists && <div className="mb-4 divide-y divide-line/70 text-sm">
+          <Row l="Status" v={<Badge tone={login.active ? (login.locked ? 'amber' : 'green') : 'gray'}>{!login.active ? 'Deactivated' : login.locked ? 'Locked' : 'Active'}</Badge>} />
+          <Row l="Last sign-in" v={login.lastLoginAt ? dateTime(login.lastLoginAt) : 'Never'} />
+          <Row l="Own password set" v={login.mustChangePassword ? 'No — must change at next sign-in' : 'Yes'} />
+        </div>}
+        <div className="space-y-3">
+          <Field label="New password" hint="10+ characters with upper, lower case and a number"><Input type="password" autoComplete="new-password" value={pw.next} onChange={(x) => setPw({ ...pw, next: x.target.value })} /></Field>
+          <Field label="New password again"><Input type="password" autoComplete="new-password" value={pw.again} onChange={(x) => setPw({ ...pw, again: x.target.value })} /></Field>
+          {pw.again && pw.again !== pw.next && <p className="text-xs font-medium text-bad">The two passwords do not match</p>}
+          <Switch checked={pw.mustChange} onChange={(x) => setPw({ ...pw, mustChange: x })} label="Ask them to choose their own at next sign-in" />
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button icon={<KeyRound className="h-4 w-4" />} disabled={!strong || pw.next !== pw.again} loading={setPassword.isPending && setPassword.variables === false} onClick={() => setPassword.mutate(false)}>Set password</Button>
+            <Button variant="secondary" icon={<RotateCcw className="h-4 w-4" />} loading={setPassword.isPending && setPassword.variables === true} onClick={() => window.confirm('Reset this login to the default password Valencia123?') && setPassword.mutate(true)}>Reset to Valencia123</Button>
+          </div>
+          <p className="text-xs text-muted">Changing the password signs the employee out everywhere. Every change is logged.</p>
+        </div>
+      </Card>
+    </Stagger>
+  );
+}
+
 export default function EmployeeDetail() {
   const { id = '' } = useParams();
   const { can } = useAuth();
-  const [tab, setTab] = useState<'overview' | 'salary' | 'history'>('overview');
+  const [tab, setTab] = useState<'overview' | 'salary' | 'history' | 'profile'>('overview');
   const [modal, setModal] = useState<'edit' | 'revise' | 'exit' | null>(null);
   const { data: e, isLoading, error } = useQuery<any>({ queryKey: ['employee', id], queryFn: () => get(`/employees/${id}`) });
   const showPay = e && e.access !== 'manager';
@@ -110,7 +189,7 @@ export default function EmployeeDetail() {
   if (isLoading || !e) return <div className="space-y-4"><Skeleton className="h-40 rounded-3xl" /><Skeleton className="h-12 w-96" /><Skeleton className="h-80" /></div>;
   const name = `${e.firstName} ${e.lastName}`;
   const admin = can('COMPANY_ADMIN'), pm = can('PAYROLL_MANAGER');
-  const tabs = [{ id: 'overview' as const, label: 'Overview', icon: <User className="h-4 w-4" /> }, ...(showPay ? [{ id: 'salary' as const, label: 'Salary', icon: <IndianRupee className="h-4 w-4" /> }] : []), ...(admin || pm ? [{ id: 'history' as const, label: 'History', icon: <History className="h-4 w-4" /> }] : [])];
+  const tabs = [{ id: 'overview' as const, label: 'Overview', icon: <User className="h-4 w-4" /> }, ...(showPay ? [{ id: 'salary' as const, label: 'Salary', icon: <IndianRupee className="h-4 w-4" /> }] : []), ...(admin || pm ? [{ id: 'history' as const, label: 'History', icon: <History className="h-4 w-4" /> }] : []), ...(admin ? [{ id: 'profile' as const, label: 'Profile', icon: <UserCog className="h-4 w-4" /> }] : [])];
   const current = structures?.find((s) => !s.effectiveTo) ?? structures?.[0];
 
   return (
@@ -166,6 +245,8 @@ export default function EmployeeDetail() {
                   {structures[i + 1] && <p className="mt-1 text-xs font-semibold text-ok">+{(((Number(s.annualCtc) - Number(structures[i + 1].annualCtc)) / Number(structures[i + 1].annualCtc)) * 100).toFixed(1)}%</p>}
                 </motion.li>))}</ol></Card>
           </Stagger>)}
+
+        {tab === 'profile' && admin && <ProfileTab e={e} />}
 
         {tab === 'history' && (
           <Stagger><Card hover={false}><CardTitle sub="Every change, who made it and when">Audit history</CardTitle>

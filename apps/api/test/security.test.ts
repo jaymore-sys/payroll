@@ -29,6 +29,19 @@ beforeAll(async () => {
 afterAll(() => closeDb());
 
 describe('authentication', () => {
+  it('admin edits an employee profile and sets their login password', async () => {
+    const emp = { id: (await as('employee').get('/auth/me')).body.employeeId as string };
+    expect((await as('payroll').post(`/employees/${emp.id}/login-password`, { resetToDefault: true })).status).toBe(403);
+    expect((await as('admin').put(`/employees/${emp.id}`, { pan: 'ABCDE1234F', bank: { holder: 'Emp One', account: '001122334455', ifsc: 'HDFC0001234' } })).status).toBe(200);
+    expect((await as('admin').get(`/employees/${emp.id}/sensitive`)).body).toMatchObject({ pan: 'ABCDE1234F', bank: { account: '001122334455' } });
+    expect((await as('admin').get(`/employees/${emp.id}/login`)).body).toMatchObject({ exists: true, email: 'employee@alpha.test' });
+    expect((await as('admin').post(`/employees/${emp.id}/login-password`, { password: 'weak' })).status).toBe(422);
+    expect((await as('admin').post(`/employees/${emp.id}/login-password`, { password: 'AdminSet2026x', mustChange: false })).status).toBe(200);
+    expect((await login('employee@alpha.test', 'AdminSet2026x')).status).toBe(200);
+    const r = await as('admin').post(`/employees/${emp.id}/login-password`, { password: PW, mustChange: false });
+    expect(r.status).toBe(200);
+    tokens.employee = (await login('employee@alpha.test')).body.accessToken; // later tests use the employee login
+  });
   it('new logins start with Valencia123 and must choose their own password first', async () => {
     const c = await as('admin').post('/users', { email: 'newbie@alpha.test', roles: ['EMPLOYEE'] });
     expect(c.body.tempPassword).toBe('Valencia123');
