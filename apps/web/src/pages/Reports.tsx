@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { motion } from 'framer-motion';
-import { FileSpreadsheet, FileText, Search } from 'lucide-react';
+import { Download, Eye, FileSpreadsheet, FileText, Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -56,8 +56,10 @@ export default function Reports() {
           <motion.div key={key + qs} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="overflow-x-auto p-2 sm:p-3">
             {error ? <p className="p-4 text-sm text-bad">{(error as Error).message}</p> : isLoading || !rep ? <Skeleton className="h-80" /> : (
               <DataTable rows={rows} keyOf={(r) => rows.indexOf(r).toString()} empty={<EmptyState icon={<FileSpreadsheet className="h-7 w-7" />} title="Nothing to show" sub="No data for this report and period." />}
-                cols={rep.columns.map((c) => ({ h: c.label, className: c.money ? 'text-right whitespace-nowrap' : 'whitespace-nowrap', cell: (r: Record<string, any>) => c.key === '_slip'
-                  ? <span className="flex gap-1.5"><Button size="sm" variant="secondary" onClick={() => window.open(`${r._slip}?view=1`, '_blank', 'noopener')}>View</Button><Button size="sm" onClick={() => window.open(r._slip, '_blank', 'noopener')}>Download</Button></span>
+                cols={rep.columns.map((c) => ({ h: c.label, className: c.money ? 'text-right whitespace-nowrap' : 'whitespace-nowrap', cell: (r: Record<string, any>) => c.key === '_view'
+                  ? <Button size="sm" variant="secondary" icon={<Eye className="h-3.5 w-3.5" />} onClick={() => window.open(`${r._slip}?view=1`, '_blank', 'noopener')}>View</Button>
+                  : c.key === '_download'
+                  ? <Button size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => window.open(r._slip, '_blank', 'noopener')}>Download</Button>
                   : c.money ? <span className="tabular-nums">{inr(Number(r[c.key] ?? 0))}</span> : <span>{String(r[c.key] ?? '')}</span> }))} />
             )}
             {rep && rep.rows.length > 0 && <p className="px-2 pt-2 text-xs text-muted">{rows.length} of {rep.rows.length} rows</p>}

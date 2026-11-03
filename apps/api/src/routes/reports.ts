@@ -255,7 +255,7 @@ const REPORTS: Record<string, { title: string; group: string; desc: string; peri
       const cons = await db.select({ p: CP, c: C }).from(CP).innerJoin(CR, eq(CR.id, CP.runId)).innerJoin(C, eq(C.id, CP.consultantId)).where(and(eq(CR.companyId, cid), eq(CR.month, month))).orderBy(asc(C.name));
       return {
         title: `Payslips — ${label(month)}`, sub: `${await runNote(cid, month)} · click View to open, Download to save as PDF`,
-        columns: [c('code', 'Code'), c('name', 'Name'), c('_slip', 'Payslip'), c('type', 'Type'), c('gross', 'Gross', true), c('net', 'Net pay', true), c('status', 'Status')],
+        columns: [c('code', 'Code'), c('name', 'Name'), c('_view', 'View'), c('_download', 'Download'), c('type', 'Type'), c('gross', 'Gross', true), c('net', 'Net pay', true), c('status', 'Status')],
         rows: [
           ...emp.map(({ slip, e, status }) => ({ code: e.code, name: name(e), type: e.employmentType === 'intern' ? 'Intern' : 'Employee', gross: Number(slip.gross), net: Number(slip.net), status: slip.hold ? 'On hold' : status === 'FINALISED' ? 'Approved' : 'Not approved', _slip: `/payslips/${slip.id}/print` })),
           ...cons.map(({ p, c: k }) => ({ code: k.code ?? '', name: k.name, type: 'Consultant', gross: Number(p.amount), net: Number(p.net), status: '', _slip: `/consultant-payments/${p.id}/print` })),
