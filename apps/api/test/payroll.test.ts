@@ -164,6 +164,28 @@ describe('manager attendance → payroll LOP', () => {
     expect((await as('payroll').get(`/payroll-runs/${run.body.id}`)).body.run.status).toBe('DRAFT');
     expect((await as('admin').post(`/payroll-runs/${run.body.id}/approve`)).status).toBe(409);
   });
+  it('reads the HR system "Employee Summary" export: matched by email / name, LOP column, duplicates and partial months flagged', async () => {
+    const list = (await as('admin').get(`/attendance?month=${m}`)).body.items as { employeeId: string; code: string; name: string }[];
+    const [a, b2] = list;
+    const emailOf = async (id: string) => (await as('admin').get(`/employees/${id}`)).body.workEmail as string;
+    const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('Employee Summary');
+    ws.addRow(['Employee ID', 'Employee Name', 'Email', 'Period From', 'Period To', 'Working Days', 'Present', 'Absent', 'Half Day', 'Leave', 'Pending Approval', 'Total Days', 'LOP']);
+    const dim = Number(m.slice(5)) === 2 ? 28 : 30;
+    ws.addRow(['999', 'Someone Else', await emailOf(a.employeeId), `${m}-01`, '', 22, 18, 2, 1, 1, 0, dim, 2.5]); // HR ID differs, email matches
+    ws.addRow([null, b2.name, 'other@hr.example', `${m}-01`, '', 4, 3, 1, 0, 0, 0, 4, 1]);                       // name match, part of month
+    ws.addRow([null, b2.name, 'other2@hr.example', `${m}-01`, '', 22, 20, 1, 0, 0, 2, dim, 1]);                  // same person, whole month
+    ws.addRow(['EMP-9', 'Not In People', 'nobody@hr.example', `${m}-01`, '', 22, 22, 0, 0, 0, 0, dim, 0]);
+    const r = await as('admin').post('/attendance/import', { month: m, fileBase64: Buffer.from(await wb.xlsx.writeBuffer()).toString('base64'), dryRun: true });
+    expect(r.body.errorCount).toBe(0);
+    expect(r.body.columns.lopDays).toBe('LOP');
+    const pa = r.body.preview.find((p: { name: string }) => p.name === a.name), pb = r.body.preview.find((p: { name: string }) => p.name === b2.name);
+    expect(pa.lopDays).toBe(2.5);
+    expect(pb).toMatchObject({ lopDays: 1, totalDays: dim });
+    expect(r.body.unmatched.join(' ')).toMatch(/Not In People/);
+    expect(r.body.warnings.join(' ')).toMatch(/twice/);
+    expect(r.body.warnings.join(' ')).toMatch(/pending approval/);
+    expect((await as('admin').post('/attendance/import', { month: m === '2026-01' ? '2026-02' : '2026-01', fileBase64: Buffer.from(await wb.xlsx.writeBuffer()).toString('base64'), dryRun: true })).body.code).toBe('wrong_month');
+  });
   it('exports the attendance sheet and imports it back (xlsx round trip)', async () => {
     const x = await as('admin').get(`/attendance/export.xlsx?month=${m}`).buffer(true).parse((res, cb) => { const b: Buffer[] = []; res.on('data', (c: Buffer) => b.push(c)); res.on('end', () => cb(null, Buffer.concat(b))); });
     expect(x.status).toBe(200);

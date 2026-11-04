@@ -10,6 +10,7 @@ import { ApiError, del, download, get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { inr, inrShort } from '../lib/format';
 import { useAct } from '../lib/hooks';
+import ImportNotes from '../components/ImportNotes';
 import { monthLabel, runLabel, runTone } from './Payroll';
 
 type Inputs = { lopDays: number; bonus: number; arrears: number; otherEarnings: number; otherDeductions: number; hold: boolean; note?: string | null };
@@ -105,7 +106,7 @@ function UploadStep({ month, items, onDone }: { month: string; items: any[]; onD
     const b64 = btoa(new Uint8Array(await f.arrayBuffer()).reduce((acc, b) => acc + String.fromCharCode(b), ''));
     setFile({ name: f.name, b64 }); setReport(null); send({ b64 }, true);
   };
-  const LABEL: Record<string, string> = { name: 'Employee', code: 'Employee code', workingDays: 'Working days', presentDays: 'Present', paidLeaveDays: 'Paid leave', lopDays: 'LOP', payableDays: 'Payable days', overtimeHours: 'Overtime', note: 'Note' };
+  const LABEL: Record<string, string> = { name: 'Employee', email: 'Email', totalDays: 'Total days', periodFrom: 'Month', halfDay: 'Half days', late: 'Late', pending: 'Pending approval', review: 'Needs review', code: 'Employee code', workingDays: 'Working days', presentDays: 'Present', paidLeaveDays: 'Paid leave', lopDays: 'LOP', payableDays: 'Payable days', overtimeHours: 'Overtime', note: 'Note' };
   return (
     <Card hover={false} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <CardTitle sub="Your monthly attendance sheet: one column per employee with the day-by-day status and the totals at the bottom (Total working Days, No. of Leaves). Employees and Interns sheets are both read. A sheet with one row per employee code works too.">Upload this month's attendance sheet</CardTitle>
@@ -127,8 +128,7 @@ function UploadStep({ month, items, onDone }: { month: string; items: any[]; onD
           <div className="flex flex-wrap gap-2 text-xs">{Object.entries(report.columns ?? {}).map(([k, h]) => <Badge key={k} tone="brand">{String(h)} → {LABEL[k] ?? k}</Badge>)}</div>
           {report.errorCount > 0 && <div className="rounded-2xl bg-bad/10 p-4 text-sm"><p className="font-bold text-bad">{report.errorCount} row(s) need fixing in the sheet</p>
             <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs">{report.report.map((r: any) => <li key={r.row}><b>Row {r.row}:</b> {r.errors.join('; ')}</li>)}</ul></div>}
-          {report.unmatched?.length > 0 && <div className="rounded-2xl bg-warn/10 p-4 text-sm text-warn"><b>{report.unmatched.length} name(s) in the sheet don't match anyone in People</b> — they are skipped. Add them in People with the same name, then upload again: {report.unmatched.slice(0, 10).join(', ')}{report.unmatched.length > 10 ? '…' : ''}</div>}
-          {report.missing?.length > 0 && <div className="rounded-2xl bg-warn/10 p-4 text-sm text-warn"><b>{report.missing.length} employee(s) not in the sheet</b> (their LOP stays 0): {report.missing.slice(0, 8).join(', ')}{report.missing.length > 8 ? '…' : ''}</div>}
+          <ImportNotes report={report} />
           {report.preview?.length > 0 && <DataTable rows={report.preview} keyOf={(r: any) => r.code} cols={[
             { h: 'Employee', cell: (r: any) => <div><p className="font-semibold">{r.name}</p><p className="text-xs text-muted">{r.code}{r.sheetName && r.sheetName !== r.name ? ` · sheet: ${r.sheetName}` : ''}</p></div> },
             { h: 'Days', className: 'text-center', cell: (r: any) => r.workingDays },

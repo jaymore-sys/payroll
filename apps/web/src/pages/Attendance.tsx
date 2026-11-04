@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CalendarCheck2, CheckCheck, ChevronLeft, ChevronRight, Download, FileUp, Lock, Save, Search, Users } from 'lucide-react';
+import ImportNotes from '../components/ImportNotes';
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Badge, Button, Card, DataTable, EmptyState, Input, Modal, PageHeader, Skeleton, Stagger, Stat } from '../components/ui';
@@ -32,7 +33,7 @@ function ImportModal({ month, open, onClose }: { month: string; open: boolean; o
       <div className="space-y-4">
         <ol className="list-decimal space-y-1 pl-5 text-sm text-muted">
           <li><button className="font-semibold text-brand" onClick={() => download(`/attendance/export.xlsx?month=${month}`, `attendance-${month}.xlsx`)}>Download this month's sheet</button> (or export from your leave software with the same columns).</li>
-          <li>Fill <b>presentDays</b>, <b>paidLeaveDays</b>, <b>lopDays</b> (and optionally overtimeHours) per employee code.</li>
+          <li>Fill <b>presentDays</b>, <b>paidLeaveDays</b>, <b>lopDays</b> (and optionally overtimeHours) per employee code — or upload the <b>HR Employee Summary</b> export as it is (matched by email / name, LOP column used).</li>
           <li>Upload it here. Nothing is saved until you click Save.</li>
         </ol>
         <label className="flex cursor-pointer flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-line p-8 text-center transition-colors hover:border-brand/50 hover:bg-brand-soft/40">
@@ -44,6 +45,7 @@ function ImportModal({ month, open, onClose }: { month: string; open: boolean; o
             <p className="font-bold">{report.errorCount ? `${report.errorCount} row(s) need fixing` : `All ${report.valid} rows look good`}</p>
             <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto text-xs">{report.report.map((r: any) => <li key={r.row}><b>Row {r.row + 1}:</b> {r.errors.join('; ')}</li>)}</ul>
           </motion.div>)}
+        {report && <ImportNotes report={report} />}
       </div>
     </Modal>
   );

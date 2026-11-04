@@ -111,19 +111,31 @@ attendanceRouter.put('/attendance', h(async (req, res) => {
   res.json({ ok: true, saved: items.length });
 }));
 
-/** Column names people actually use in their attendance sheets, matched ignoring case, spaces and punctuation. */
+/**
+ * Column names people actually use in their attendance sheets, matched ignoring case, spaces and punctuation.
+ * Within a field the earlier name wins when a sheet has several (the HR summary has both "LOP" and "Absent": LOP is used).
+ */
 const COLUMNS: Record<string, string[]> = {
   code: ['code', 'empcode', 'employeecode', 'empid', 'employeeid', 'empno', 'employeeno', 'staffid', 'ecode'],
+  name: ['employeename', 'name', 'empname', 'fullname'],
+  email: ['email', 'workemail', 'emailid', 'officialemail'],
   workingDays: ['workingdays', 'totalworkingdays', 'workdays', 'noofworkingdays', 'wd'],
   presentDays: ['presentdays', 'present', 'dayspresent', 'daysworked', 'workeddays', 'totalpresent'],
   paidLeaveDays: ['paidleavedays', 'paidleave', 'leave', 'leaves', 'leavedays', 'pl', 'approvedleave', 'paidleaves'],
-  lopDays: ['lopdays', 'lop', 'absent', 'absentdays', 'lwp', 'unpaidleave', 'unpaiddays', 'lossofpay'],
+  lopDays: ['lopdays', 'lop', 'lossofpay', 'lwp', 'unpaiddays', 'unpaidleave', 'absentdays', 'absent'],
   payableDays: ['payabledays', 'paiddays', 'payable', 'salarydays'],
+  totalDays: ['totaldays'],
+  periodFrom: ['periodfrom', 'fromdate'],
+  halfDay: ['halfday', 'halfdays'],
+  late: ['late', 'lates'],
+  pending: ['pendingapproval', 'pendingapprovals'],
+  review: ['needsreview'],
   overtimeHours: ['overtimehours', 'overtime', 'ot', 'othours'],
   note: ['note', 'notes', 'remark', 'remarks'],
 };
 const norm = (h: unknown) => String(h ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const canonical = (h: unknown) => Object.entries(COLUMNS).find(([, names]) => names.includes(norm(h)))?.[0];
+const rank = (h: unknown) => { const c = canonical(h); return c ? COLUMNS[c].indexOf(norm(h)) : 99; };
 const cell = (v: unknown) => (v && typeof v === 'object' && 'result' in (v as object) ? (v as { result: unknown }).result : v);
 
 const LABELS = {
@@ -176,19 +188,25 @@ export async function rowsFromXlsx(b64: string) {
   let headRow = 0, head: unknown[] = [];
   for (let i = 1; i <= Math.min(10, ws.rowCount) && !headRow; i++) {
     const vals = ws.getRow(i).values as unknown[];
-    if (vals.some((v) => canonical(cell(v)) === 'code')) { headRow = i; head = vals.map(cell); }
+    if (vals.some((v) => ['code', 'email'].includes(canonical(cell(v)) ?? '')) || (vals.some((v) => canonical(cell(v)) === 'name') && vals.some((v) => canonical(cell(v)) === 'lopDays'))) { headRow = i; head = vals.map(cell); }
   }
-  if (!headRow) throw new ApiError(422, 'no_code_column', 'Could not find an employee code column (e.g. "Emp Code") or a day-by-day sheet with a "Date" column');
-  const columns: Record<string, string> = {};
-  head.forEach((h) => { const c = canonical(h); if (c && !columns[c]) columns[c] = String(h).trim(); });
+  if (!headRow) throw new ApiError(422, 'no_code_column', 'Could not find an employee code / name / email column or a day-by-day sheet with a "Date" column');
+  // For each field, the column whose header ranks best (e.g. "LOP" before "Absent").
+  const pick: Record<string, number> = {};
+  head.forEach((h, c) => { const k = canonical(h); if (k && (pick[k] === undefined || rank(h) < rank(head[pick[k]]))) pick[k] = c; });
+  const isSummary = pick.totalDays !== undefined; // HR system 'Employee Summary' export
+  const columns: Record<string, string> = Object.fromEntries(Object.entries(pick).map(([k, c]) => [k, String(head[c]).trim()]));
   const rows: Record<string, unknown>[] = [];
   ws.eachRow((row, i) => {
     if (i <= headRow) return;
-    const vals = row.values as unknown[], rec: Record<string, unknown> = {};
-    head.forEach((h, c) => { const k = canonical(h); if (k && rec[k] === undefined) rec[k] = cell(vals[c]); });
-    if (rec.code && !/^total/i.test(String(rec.code))) rows.push(rec);
+    const vals = row.values as unknown[], rec: Record<string, unknown> = { rowSheet: true, summary: isSummary };
+    for (const [k, c] of Object.entries(pick)) rec[k] = cell(vals[c]);
+    if ((rec.code || rec.email || rec.employeeName || rec.name) && !/^total/i.test(String(rec.code ?? rec.name ?? ''))) rows.push(rec);
   });
-  return { rows, columns, sheetMonth: undefined as string | undefined };
+  // "Period From" (HR summary export) tells us which month the sheet is for.
+  const from = rows.find((x) => x.periodFrom)?.periodFrom;
+  const sheetMonth = from instanceof Date ? from.toISOString().slice(0, 7) : typeof from === 'string' && /^\d{4}-\d{2}/.test(from) ? from.slice(0, 7) : undefined;
+  return { rows, columns, sheetMonth };
 }
 
 attendanceRouter.post('/attendance/import', h(async (req, res) => {
@@ -201,6 +219,8 @@ attendanceRouter.post('/attendance/import', h(async (req, res) => {
   const { emps, canEdit } = await scope(req, month);
   const byId = new Map((await withWorkingDays(req.user!.cid, month, emps)).map((r) => [r.e.id, r]));
   const byCode = new Map(emps.map((x) => [x.e.code.toUpperCase(), x.e.id]));
+  const byEmail = new Map(emps.map((x) => [x.e.workEmail.toLowerCase(), x.e.id]));
+  const warn: { id: string; text: string }[] = [];
   // Name matching for sheets without codes: full name, else a unique first-name / prefix match.
   const nm = (v: unknown) => String(v ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
   const byName = (raw: string): string | undefined | 'ambiguous' => {
@@ -209,7 +229,9 @@ attendanceRouter.post('/attendance/import', h(async (req, res) => {
     const part = emps.filter((x) => nm(x.e.firstName) === n || nm(`${x.e.firstName} ${x.e.lastName}`).startsWith(`${n} `));
     if (part.length) return part.length === 1 ? part[0].e.id : 'ambiguous';
     // Surname spelt differently in the sheet ("Kikawat" / "Kikavat"): fall back to a first name only one employee has.
-    const first = emps.filter((x) => nm(x.e.firstName) === n.split(' ')[0]);
+    // …but only when the surnames agree on the first 3 letters, or one side has no real surname ("Deepak Pancholi" ≠ "Deepak Kolbandrekar").
+    const sheetLast = n.split(' ').slice(1).join(' ');
+    const first = emps.filter((x) => nm(x.e.firstName) === n.split(' ')[0] && (!sheetLast || nm(x.e.lastName).replace(/[^a-z]/g, '').length <= 1 || nm(x.e.lastName).slice(0, 3) === sheetLast.slice(0, 3) || sheetLast.replace(/ /g, '').includes(nm(x.e.lastName).replace(/ /g, '')) || nm(x.e.lastName).replace(/ /g, '').includes(sheetLast.replace(/ /g, ''))));
     if (first.length) return first.length === 1 ? first[0].e.id : 'ambiguous';
     // Short name in the sheet ("Essa Ansari" for Mohammad Essa Mohammad Ejaz Ansari): every word appears in the full name.
     const words = n.split(' ');
@@ -223,7 +245,7 @@ attendanceRouter.post('/attendance/import', h(async (req, res) => {
   const items: z.infer<typeof item>[] = [];
   const preview: Record<string, unknown>[] = [];
   rows.forEach((raw, i) => {
-    if (raw.name !== undefined) { // day-by-day grid: matched by name, totals already worked out in the sheet
+    if (raw.name !== undefined && !raw.rowSheet) { // day-by-day grid: matched by name, totals already worked out in the sheet
       const id = byName(String(raw.name)), r = id && id !== 'ambiguous' ? byId.get(id) : undefined;
       if (!r) { unmatched.push(`${String(raw.name).trim()}${id === 'ambiguous' ? ' (more than one employee has this name)' : ''} — ${raw.sheet}`); return; }
       const dim = r.periodDays;
@@ -238,27 +260,63 @@ attendanceRouter.post('/attendance/import', h(async (req, res) => {
       return;
     }
     const code = String(raw.code ?? raw.employeeCode ?? '').trim().toUpperCase();
-    const id = byCode.get(code), r = id ? byId.get(id) : undefined;
+    // Our employee code first; else the work email; else the name (HR systems use their own IDs and office emails).
+    let id = byCode.get(code) ?? (raw.email ? byEmail.get(String(raw.email).trim().toLowerCase()) : undefined);
+    if (!id && raw.name) {
+      const n = byName(String(raw.name));
+      if (n === 'ambiguous') { unmatched.push(`${String(raw.name).trim()} (more than one employee has this name)`); return; }
+      id = n;
+    }
+    if (!id && (raw.summary || !code)) { unmatched.push(`${String(raw.name ?? raw.email ?? code).trim()}${raw.email ? ` <${raw.email}>` : ''}`); return; }
+    const r = id ? byId.get(id) : undefined;
     const wd = has(raw.workingDays) ? num(raw.workingDays) : undefined;
     const paid = num(raw.paidLeaveDays);
     // LOP straight from the sheet; otherwise from payable days, or working days − present − paid leave.
     const lop = has(raw.lopDays) ? num(raw.lopDays)
       : has(raw.payableDays) && r ? Math.max(0, r.periodDays - num(raw.payableDays))
       : wd !== undefined && has(raw.presentDays) ? Math.max(0, wd - num(raw.presentDays) - paid) : 0;
-    const present = has(raw.presentDays) ? num(raw.presentDays) : Math.max(0, (wd ?? r?.workingDays ?? 0) - paid - lop);
+    // HR summary: "Present" leaves out field visits, late and half days, so present = working days − leave − LOP.
+    const present = has(raw.presentDays) && !raw.summary ? num(raw.presentDays) : Math.max(0, (wd ?? r?.workingDays ?? 0) - paid - lop);
     const parsed = item.safeParse({ employeeId: id ?? '00000000-0000-0000-0000-000000000000', workingDays: wd, presentDays: present, paidLeaveDays: paid, lopDays: lop, overtimeHours: num(raw.overtimeHours), note: raw.note ? String(raw.note) : null });
     const errs = [
       ...(!id ? [`code "${code}" not found or not in your team`] : !canEdit(id) ? [`${code}: not editable by you`] : []),
       ...(parsed.success ? (r ? problems(parsed.data, r) : []) : parsed.error.issues.map((x) => `${x.path.join('.')}: ${x.message}`)),
     ];
     if (errs.length) report.push({ row: i + 1, errors: errs });
-    else { items.push(parsed.data!); preview.push({ code, name: `${r!.e.firstName} ${r!.e.lastName}`, workingDays: wd ?? r!.workingDays, presentDays: present, paidLeaveDays: paid, lopDays: lop }); }
+    else {
+      const who = `${r!.e.code} ${r!.e.firstName} ${r!.e.lastName}`;
+      const total = has(raw.totalDays) ? num(raw.totalDays) : undefined;
+      // Same person twice (e.g. two email IDs in the HR system): keep the row that covers more of the month.
+      const dupAt = items.findIndex((x) => x.employeeId === id);
+      if (dupAt >= 0) {
+        const prevTotal = Number(preview[dupAt].totalDays ?? 0);
+        const dupMsg = `${who} is in the sheet twice — using the row that covers ${Math.max(prevTotal, total ?? 0)} days`;
+        if ((total ?? 0) <= prevTotal) { warn.push({ id: '', text: dupMsg }); return; }
+        items.splice(dupAt, 1); preview.splice(dupAt, 1);
+        for (let k = warn.length - 1; k >= 0; k--) if (warn[k].id === id) warn.splice(k, 1); // the replaced row's checks no longer apply
+        warn.push({ id: '', text: dupMsg });
+      }
+      const notes = [
+        total !== undefined && total < r!.periodDays && `sheet covers only ${total} of ${r!.periodDays} days`,
+        num(raw.pending) > 0 && `${num(raw.pending)} day(s) pending approval`,
+        num(raw.review) > 0 && `${num(raw.review)} day(s) need review`,
+        num(raw.halfDay) > 0 && `half days ${num(raw.halfDay)}`,
+        num(raw.late) > 0 && `late ${num(raw.late)}`,
+      ].filter(Boolean) as string[];
+      if (total !== undefined && total < r!.periodDays) warn.push({ id: id!, text: `${who}: the sheet covers only ${total} of ${r!.periodDays} days — LOP ${lop} is for those days only` });
+      if (num(raw.pending) > 0) warn.push({ id: id!, text: `${who}: ${num(raw.pending)} day(s) still pending approval in the HR system — LOP may change` });
+      if (wd !== undefined && wd > 0 && lop >= wd * 0.8) warn.push({ id: id!, text: `${who}: LOP ${lop} of ${wd} working days — absent most of the month; check whether they have left` });
+      const note = notes.join(', ') || (raw.note ? String(raw.note) : null);
+      parsed.data!.note = note?.slice(0, 200) ?? null;
+      items.push(parsed.data!); preview.push({ code: r!.e.code, name: `${r!.e.firstName} ${r!.e.lastName}`, sheetName: raw.name ? String(raw.name).trim() : undefined, workingDays: wd ?? r!.workingDays, presentDays: present, paidLeaveDays: paid, lopDays: lop, totalDays: total, note });
+    }
   });
+  const warnings = warn.map((w) => w.text);
   const inSheet = new Set(items.map((x) => x.employeeId));
   const missing = [...byId.values()].filter((r) => canEdit(r.e.id) && !inSheet.has(r.e.id)).map((r) => `${r.e.code} ${r.e.firstName} ${r.e.lastName}`);
-  if (dryRun || report.length) return res.json({ dryRun, total: rows.length, valid: items.length, errorCount: report.length, report, columns, preview, missing, unmatched });
+  if (dryRun || report.length) return res.json({ dryRun, total: rows.length, valid: items.length, errorCount: report.length, report, columns, preview, missing, unmatched, warnings });
   await save(req, month, items);
-  res.json({ dryRun: false, total: rows.length, saved: items.length, errorCount: 0, report: [], columns, preview, missing, unmatched });
+  res.json({ dryRun: false, total: rows.length, saved: items.length, errorCount: 0, report: [], columns, preview, missing, unmatched, warnings });
 }));
 
 attendanceRouter.get('/attendance/export.xlsx', h(async (req, res) => {
