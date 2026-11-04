@@ -267,16 +267,17 @@ export default function PayrollRun() {
 
       {step > 0 && <Card hover={false} className="p-0" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
         <div className="flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle sub="Click an employee to see the full salary and tax breakdown · LOP with ✓ comes from the attendance sheet">Salary breakdown</CardTitle>
+          <CardTitle sub="Click an employee to see the full salary and tax breakdown · LOP with ✓ came from the attendance sheet — you can change it here">Salary breakdown</CardTitle>
           <div className="relative sm:w-72"><Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" /><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" className="pl-10" /></div>
         </div>
         <div className="p-2 sm:p-3">
           <DataTable rows={items} keyOf={(i: any) => i.employeeId} onRow={(i: any) => i.payslip && setSlip(i)}
             cols={[
               { h: 'Employee', cell: (i: any) => <div className="min-w-[160px]"><p className="flex items-center gap-1.5 font-semibold">{i.name}{!i.hasBank && <CircleAlert className="h-3.5 w-3.5 text-bad" aria-label="No bank details" />}{(i.joinedThisMonth || i.leavingThisMonth) && <Badge tone="blue">{i.joinedThisMonth ? 'joiner' : 'leaver'}</Badge>}</p><p className="text-xs text-muted">{i.code} · {i.department ?? '—'}</p></div> },
-              { h: 'LOP days', cell: (i: any) => i.attendance
-                  ? <span title={`From attendance: ${i.attendance.presentDays} present, ${i.attendance.paidLeaveDays} paid leave of ${i.attendance.workingDays} working days`} className={clsx('inline-flex items-center gap-1.5 rounded-lg bg-surface-2 px-2.5 py-1.5 text-sm font-semibold', i.attendance.lopDays > 0 && 'text-bad')}>{i.attendance.lopDays}<CalendarCheck2 className="h-3.5 w-3.5 text-ok" /></span>
-                  : num(i, 'lopDays', 'w-16', 0.5) },
+              { h: 'LOP days', cell: (i: any) => (
+                  <span className="inline-flex items-center gap-1" title={i.attendance ? `From attendance: ${i.attendance.presentDays} present, ${i.attendance.paidLeaveDays} paid leave of ${i.attendance.workingDays} working days — edit to correct it` : undefined}>
+                    {num(i, 'lopDays', 'w-16', 0.5)}{i.attendance && <CalendarCheck2 className="h-3.5 w-3.5 shrink-0 text-ok" />}
+                  </span>) },
               { h: 'Bonus', cell: (i: any) => num(i, 'bonus') },
               { h: 'Arrears', cell: (i: any) => num(i, 'arrears') },
               { h: 'Other earnings', cell: (i: any) => num(i, 'otherEarnings'), hideOnMobile: true },

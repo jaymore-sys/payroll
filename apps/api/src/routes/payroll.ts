@@ -148,8 +148,16 @@ payrollRouter.put('/payroll-runs/:id/inputs', requireRole(...ADMIN), h(async (re
   const { items } = parse(z.object({ items: z.array(z.object({
     employeeId: z.string().uuid(), lopDays: z.number().min(0).max(dim).multipleOf(0.1), bonus: money, arrears: money.default(0), otherEarnings: money, otherDeductions: money, hold: z.boolean(), note: z.string().max(200).nullish(),
   })).min(1).max(5000) }), req.body);
+  const A = schema.attendanceMonths;
+  const att = new Map((await db.select().from(A).where(and(eq(A.companyId, req.user!.cid), eq(A.month, run.month)))).map((r) => [r.employeeId, r]));
   await db.transaction(async (tx) => {
     for (const it of items) {
+      // LOP edited here also corrects the month's attendance record (payroll reads LOP from attendance when there is one).
+      const a = att.get(it.employeeId);
+      if (a && Number(a.lopDays) !== it.lopDays) {
+        const present = Math.max(0, Number(a.workingDays) - Number(a.paidLeaveDays) - it.lopDays);
+        await tx.update(A).set({ lopDays: String(it.lopDays), presentDays: String(present), note: [a.note, 'LOP edited in payroll run'].filter(Boolean).join(' · ').slice(0, 200), enteredBy: req.user!.sub }).where(eq(A.id, a.id));
+      }
       await tx.update(I).set({ lopDays: String(it.lopDays), bonus: String(it.bonus), arrears: String(it.arrears), otherEarnings: String(it.otherEarnings), otherDeductions: String(it.otherDeductions), hold: it.hold, note: it.note ?? null })
         .where(and(eq(I.runId, run.id), eq(I.employeeId, it.employeeId), eq(I.companyId, req.user!.cid)));
     }

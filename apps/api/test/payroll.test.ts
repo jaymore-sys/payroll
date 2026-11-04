@@ -163,6 +163,14 @@ describe('manager attendance → payroll LOP', () => {
     await as('manager').put('/attendance', { month: m, items: [{ employeeId: t.employeeId, presentDays: 10, paidLeaveDays: 0, lopDays: 1 }] });
     expect((await as('payroll').get(`/payroll-runs/${run.body.id}`)).body.run.status).toBe('DRAFT');
     expect((await as('admin').post(`/payroll-runs/${run.body.id}/approve`)).status).toBe(409);
+    // LOP from attendance can be corrected on the run itself.
+    const cur = (await as('payroll').get(`/payroll-runs/${run.body.id}`)).body.items.find((i: { employeeId: string }) => i.employeeId === t.employeeId);
+    expect((await as('payroll').put(`/payroll-runs/${run.body.id}/inputs`, { items: [{ ...cur.inputs, employeeId: t.employeeId, lopDays: 3.5 }] })).status).toBe(200);
+    await as('payroll').post(`/payroll-runs/${run.body.id}/calculate`);
+    const after = (await as('payroll').get(`/payroll-runs/${run.body.id}`)).body.items.find((i: { employeeId: string }) => i.employeeId === t.employeeId);
+    expect(after.attendance.lopDays).toBe(3.5);
+    expect(after.inputs.lopDays).toBe(3.5);
+    expect(after.payslip.notes.join(' ')).toMatch(/3.5 LOP/);
   });
   it('reads the HR system "Employee Summary" export: matched by email / name, LOP column, duplicates and partial months flagged', async () => {
     const list = (await as('admin').get(`/attendance?month=${m}`)).body.items as { employeeId: string; code: string; name: string }[];
