@@ -188,3 +188,20 @@ describe('leave flow', () => {
     expect(back.balance).toBe(el.balance);
   });
 });
+
+describe('reset company data', () => {
+  it('only a Company Admin with the right password wipes their own company; setup and their login stay', async () => {
+    expect((await as('payroll').post('/company/reset-data', { confirm: 'DELETE', password: PW })).status).toBe(403);
+    expect((await as('betaAdmin').post('/company/reset-data', { confirm: 'delete', password: PW })).status).toBe(422);
+    expect((await as('betaAdmin').post('/company/reset-data', { confirm: 'DELETE', password: 'wrong' })).status).toBe(400);
+    const alphaBefore = (await as('admin').get('/employees?limit=1')).body.total;
+    const r = await as('betaAdmin').post('/company/reset-data', { confirm: 'DELETE', password: PW });
+    expect(r.status).toBe(200);
+    expect(r.body.deleted.employees).toBeGreaterThan(0);
+    expect((await as('betaAdmin').get('/employees')).body.total).toBe(0);
+    expect((await as('betaAdmin').get('/company')).status).toBe(200);
+    expect((await login('admin@beta.test')).status).toBe(200);
+    expect((await login('payroll@beta.test')).status).toBe(401);
+    expect((await as('admin').get('/employees?limit=1')).body.total).toBe(alphaBefore); // other company untouched
+  });
+});

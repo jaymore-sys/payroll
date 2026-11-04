@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, ne } from 'drizzle-orm';
 import type { MySqlTable } from 'drizzle-orm/mysql-core';
 import { Router } from 'express';
 import { z, type ZodObject, type ZodRawShape } from 'zod';
@@ -6,8 +6,8 @@ import { db, deleteReturning, insertReturning, schema, updateReturning } from '.
 import type { Role } from '../db/schema';
 import { audit } from '../lib/audit';
 import { needsRecalc } from '../lib/runs';
-import { requireRole } from '../lib/auth';
-import { h, notFound, parse } from '../lib/http';
+import { requireRole, verifyPassword } from '../lib/auth';
+import { ApiError, h, notFound, parse } from '../lib/http';
 
 export const companyRouter = Router();
 const C = schema.companies;
@@ -72,3 +72,29 @@ crud('branches', schema.branches, z.object({ name: z.string().min(2).max(200), s
 crud('departments', schema.departments, z.object({ name: z.string().min(1).max(100) }), 'all', schema.departments.name);
 crud('designations', schema.designations, z.object({ name: z.string().min(1).max(100) }), 'all', schema.designations.name);
 crud('holidays', schema.holidays, z.object({ date: z.string().date(), name: z.string().min(1).max(100), state: opt(z.string().regex(/^[A-Z]{2}$/)), restricted: z.boolean().default(false) }), 'all', schema.holidays.date);
+
+/**
+ * Danger zone: delete every employee, consultant, salary, attendance, leave, payroll run, payslip and login of this
+ * company. Kept: company setup (branches, departments, leave types…), the audit log and the admin doing the reset.
+ */
+companyRouter.post('/company/reset-data', requireRole('COMPANY_ADMIN'), h(async (req, res) => {
+  const { password } = parse(z.object({ confirm: z.literal('DELETE', { message: 'Type DELETE to confirm' }), password: z.string().min(1).max(200) }), req.body);
+  const cid = req.user!.cid, S = schema;
+  const [me] = await db.select().from(S.users).where(eq(S.users.id, req.user!.sub));
+  if (!(await verifyPassword(me.passwordHash, password))) throw new ApiError(400, 'invalid_password', 'Your password is wrong');
+  const counts: Record<string, number> = {};
+  await db.transaction(async (tx) => {
+    const del = async (name: string, t: MySqlTable & { companyId: any }) => { const [r] = (await tx.delete(t).where(eq(t.companyId, cid))) as unknown as [{ affectedRows: number }]; counts[name] = r.affectedRows; };
+    await tx.update(S.users).set({ employeeId: null }).where(eq(S.users.id, me.id));
+    await del('payslips', S.payslips); await del('payrollInputs', S.payrollInputs); await del('payrollRuns', S.payrollRuns);
+    await del('consultantPayments', S.consultantPayments); await del('consultantRuns', S.consultantRuns); await del('consultants', S.consultants);
+    await del('attendance', S.attendanceMonths); await del('leaveLedger', S.leaveLedger); await del('leaveRequests', S.leaveRequests);
+    await del('changeRequests', S.changeRequests); await del('salaryStructures', S.salaryStructures);
+    const [u] = (await tx.delete(S.users).where(and(eq(S.users.companyId, cid), ne(S.users.id, me.id)))) as unknown as [{ affectedRows: number }];
+    counts.logins = u.affectedRows;
+    await del('employees', S.employees);
+    await tx.update(S.companies).set({ nextEmployeeSeq: 1 }).where(eq(S.companies.id, cid));
+  });
+  await audit(req, 'company_data_reset', 'company', cid, undefined, counts);
+  res.json({ ok: true, deleted: counts });
+}));

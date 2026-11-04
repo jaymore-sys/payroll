@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { Building2, CalendarDays, Landmark, MapPin, Settings2, Shapes } from 'lucide-react';
+import { Building2, CalendarDays, Landmark, MapPin, Settings2, Shapes, Trash2 } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useQueryClient } from '@tanstack/react-query';
 import { date } from '../lib/format';
 import { useEffect, useState } from 'react';
 import MasterList from '../components/MasterList';
 import { Badge, Button, Card, CardTitle, Field, Input, PageHeader, Select, Skeleton, Stagger, Switch, Tabs } from '../components/ui';
-import { get, put } from '../lib/api';
+import { get, post, put } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { fieldErrors, useAct } from '../lib/hooks';
 
@@ -44,6 +46,26 @@ const WEEK_OFFS: [string, { weeklyOffs: number[]; offSaturdaysOfMonth?: number[]
   ['Sunday + 2nd & 4th Saturday', { weeklyOffs: [0], offSaturdaysOfMonth: [2, 4] }], ['Sunday + 1st & 3rd Saturday', { weeklyOffs: [0], offSaturdaysOfMonth: [1, 3] }],
 ];
 
+/** Danger zone: wipe all employee and payroll data of the company (company setup and this admin stay). */
+function ResetData() {
+  const qc = useQueryClient();
+  const [v, setV] = useState({ confirm: '', password: '' });
+  const act = useAct(() => post('/company/reset-data', v), {
+    onDone: (r) => { toast.success(`Deleted ${r.deleted.employees} employees and all their payroll data`); setV({ confirm: '', password: '' }); qc.invalidateQueries(); },
+  });
+  return (
+    <Card hover={false} className="border-bad/40">
+      <CardTitle sub="Deletes every employee, salary, attendance, leave, payroll run, payslip, consultant and employee login. Company setup, branches, departments, holidays, the audit log and your own login stay. This cannot be undone — download any reports you need first.">Delete all employee & payroll data</CardTitle>
+      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+        <Field label='Type DELETE to confirm'><Input value={v.confirm} onChange={(e) => setV({ ...v, confirm: e.target.value })} placeholder="DELETE" /></Field>
+        <Field label="Your password"><Input type="password" autoComplete="current-password" value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })} /></Field>
+        <Button variant="danger" icon={<Trash2 className="h-4 w-4" />} disabled={v.confirm !== 'DELETE' || !v.password} loading={act.isPending}
+          onClick={() => window.confirm('Delete ALL employees and payroll data permanently?') && act.mutate()}>Delete everything</Button>
+      </div>
+    </Card>
+  );
+}
+
 export default function Settings() {
   const { can } = useAuth();
   const edit = can('COMPANY_ADMIN');
@@ -54,7 +76,7 @@ export default function Settings() {
     <>
       <PageHeader title="Company setup" sub={edit ? 'Everything the payroll engine needs before the first run' : 'Read-only for Payroll Managers'} />
       <div className="mb-5"><Tabs value={tab} onChange={setTab} tabs={[{ id: 'company', label: 'Company & pay', icon: <Building2 className="h-4 w-4" /> }, { id: 'entities', label: 'Legal entities', icon: <Landmark className="h-4 w-4" /> }, { id: 'branches', label: 'Branches', icon: <MapPin className="h-4 w-4" /> }, { id: 'org', label: 'Departments & designations', icon: <Shapes className="h-4 w-4" /> }, { id: 'holidays', label: 'Holidays', icon: <CalendarDays className="h-4 w-4" /> }]} /></div>
-      {tab === 'company' && (c ? <CompanyForm c={c} edit={edit} /> : <Skeleton className="h-96" />)}
+      {tab === 'company' && (c ? <><CompanyForm c={c} edit={edit} />{edit && <div className="mt-5"><ResetData /></div>}</> : <Skeleton className="h-96" />)}
       {tab === 'entities' && <MasterList path="entities" title="Legal entities" sub="Each entity has its own PAN, TAN, PF and ESI codes" canEdit={edit}
         fields={[{ k: 'name', label: 'Name' }, { k: 'pan', label: 'PAN', upper: true }, { k: 'tan', label: 'TAN', upper: true }, { k: 'pfCode', label: 'PF establishment code', upper: true }, { k: 'esiCode', label: 'ESI employer code' }]}
         render={(r) => <div><p className="font-semibold">{r.name}</p><p className="text-xs text-muted">PAN {r.pan ?? '—'} · TAN {r.tan ?? '—'} · PF {r.pfCode ?? '—'} · ESI {r.esiCode ?? '—'}</p></div>} />}
