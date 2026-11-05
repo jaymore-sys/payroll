@@ -32,6 +32,7 @@ export interface CtcInput {
    */
   employerCostInCtc?: boolean;
   pfOptOut?: boolean;
+  pfFixed?: number | null;
   internationalWorker?: boolean;
   esiExempt?: boolean;
   ptExempt?: boolean;
@@ -69,7 +70,7 @@ function build(gross: Decimal, i: CtcInput, tpl: ComponentDef[], rules: Statutor
   const effWages = wages.plus(i.labourCodeMode === false ? 0 : deemed);
   const month = i.asOf ?? new Date().toISOString().slice(0, 7);
   const stat = computeStatutory(
-    { gender: i.gender ?? 'M', state: i.state, age: i.age ?? 30, doj: i.doj ?? `${month}-01`, pfCapMode: i.pfCapMode, pfOptOut: i.pfOptOut, internationalWorker: i.internationalWorker, esiExempt: i.esiExempt, ptExempt: i.ptExempt },
+    { gender: i.gender ?? 'M', state: i.state, age: i.age ?? 30, doj: i.doj ?? `${month}-01`, pfCapMode: i.pfCapMode, pfOptOut: i.pfOptOut, pfFixed: i.pfFixed, internationalWorker: i.internationalWorker, esiExempt: i.esiExempt, ptExempt: i.ptExempt },
     { month, pfWage: n(effWages), esiGross: n(gross), grossMonthly: n(gross), payableDays: 30 },
     rules,
   );

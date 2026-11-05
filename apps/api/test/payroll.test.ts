@@ -43,9 +43,16 @@ describe('salary with my own split', () => {
     expect(again.status).toBe(201);
     expect(again.body.id).toBe(first.body.id);
     expect(again.body.breakup.employee.pf).toBe(3000);
+    // An earlier date (last month) replaces the later salary.
     const earlier = await as('admin').post(`/employees/${emp.id}/salary-revisions`, { monthlyGross: 30000, effectiveFrom: '2026-11-01' });
-    expect(earlier.status).toBe(409);
-    expect(earlier.body.message).toMatch(/01-12-2026/);
+    expect(earlier.status).toBe(201);
+    const list = (await as('admin').get(`/employees/${emp.id}/salary-structures`)).body as { effectiveFrom: string; effectiveTo: string | null }[];
+    expect(list.filter((x) => x.effectiveFrom >= '2026-11-01').map((x) => x.effectiveFrom)).toEqual(['2026-11-01']);
+    expect(list.find((x) => x.effectiveFrom === '2026-11-01')!.effectiveTo).toBeNull();
+    expect(list.filter((x) => !x.effectiveTo)).toHaveLength(1);
+    // Admin sets the PF amount
+    expect((await as('admin').put(`/employees/${emp.id}`, { pfFixed: 1800 })).status).toBe(200);
+    expect((await as('admin').get(`/employees/${emp.id}`)).body.pfFixed).toBe(1800);
   });
 });
 

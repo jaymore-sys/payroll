@@ -8,6 +8,8 @@ export interface StatEmployee {
   doj: string;               // YYYY-MM-DD
   pfCapMode: 'capped' | 'actual';
   pfOptOut?: boolean;
+  /** PF chosen by the admin: this amount each month for the employee (employer matches it) instead of 12% of the PF wage. */
+  pfFixed?: number | null;
   internationalWorker?: boolean;
   vpfRate?: number;
   disabled?: boolean;
@@ -42,9 +44,11 @@ export function computeStatutory(e: StatEmployee, m: MonthInputs, rules: Statuto
     const ceilWage = min(m.pfWage, p.ceiling);
     const epsEligible = !e.internationalWorker && e.age < p.epsAgeLimit && !(e.doj >= '2014-09-01' && D(m.pfWage).gt(p.ceiling));
     if (!epsEligible) notes.push('No EPS: age, international worker or post-Sep-2014 joiner above ceiling');
-    const employee = rupee(base.times(p.empRate));
-    const employerTotal = rupee(base.times(p.erRate));
-    const eps = epsEligible ? rupee(min(ceilWage.times(p.epsRate), p.epsMax)) : D(0);
+    const fixed = e.pfFixed !== undefined && e.pfFixed !== null && e.pfFixed >= 0 ? D(e.pfFixed) : null;
+    if (fixed) notes.push(`PF fixed at ₹${n(fixed)} by the admin`);
+    const employee = fixed ?? rupee(base.times(p.empRate));
+    const employerTotal = fixed ?? rupee(base.times(p.erRate));
+    const eps = epsEligible ? min(rupee(min(ceilWage.times(p.epsRate), p.epsMax)), employerTotal) : D(0);
     pf = {
       ruleId: pfR.id, pfWage: n(base), employee: n(employee), vpf: n(rupee(base.times(e.vpfRate ?? 0))),
       eps: n(eps), epf: n(employerTotal.minus(eps)), employerTotal: n(employerTotal),

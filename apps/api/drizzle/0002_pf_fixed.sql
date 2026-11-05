@@ -1,0 +1,1 @@
+ALTER TABLE `employee` ADD `pf_fixed` decimal(14,2);

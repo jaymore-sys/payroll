@@ -39,23 +39,22 @@ app.listen(env.PORT, () => console.log(`Valencia Payroll API on http://localhost
   if (made) console.log(`${made} employee login(s) created with the default password`);
 
   // One-off, asked for on 5 Nov 2026: Jay More's salary = ₹30,000 with HRA ₹5,000, so PF is ₹3,000 and PT ₹200.
-  // From his latest salary if it starts in October 2026 or later (corrects it), else from 1 Oct 2026. Runs once (audit marker).
+  // From 1 Oct 2026 (replaces any later revision, e.g. the one saved on 5 Nov). Runs once (audit marker).
   const { createRevision } = await import('./routes/employees');
-  const { desc, sql: q } = await import('drizzle-orm');
+  const { sql: q } = await import('drizzle-orm');
   const jays = await db.select().from(schema.employees).where(and(q`lower(${schema.employees.firstName}) = 'jay'`, q`lower(${schema.employees.lastName}) = 'more'`, inArray(schema.employees.status, ['ACTIVE', 'NOTICE'])));
   for (const j of jays) {
-    const [done] = await db.select({ id: schema.auditLog.id }).from(schema.auditLog).where(and(eq(schema.auditLog.action, 'data_fix_salary_30k'), eq(schema.auditLog.entityId, j.id)));
+    const [done] = await db.select({ id: schema.auditLog.id }).from(schema.auditLog).where(and(eq(schema.auditLog.action, 'data_fix_salary_30k_from_oct'), eq(schema.auditLog.entityId, j.id)));
     if (done) continue;
     const [admin] = await db.select().from(schema.users).where(and(eq(schema.users.companyId, j.companyId), q`json_contains(${schema.users.roles}, '"COMPANY_ADMIN"')`)).limit(1);
-    const [cur] = await db.select().from(schema.salaryStructures).where(eq(schema.salaryStructures.employeeId, j.id)).orderBy(desc(schema.salaryStructures.effectiveFrom)).limit(1);
-    const from = cur && cur.effectiveFrom >= '2026-10-01' ? cur.effectiveFrom : '2026-10-01';
+    const from = '2026-10-01';
     const req = { user: { cid: j.companyId, sub: admin?.id ?? null }, ip: null };
     await createRevision(req, j.id, { components: [
       { code: 'BASIC', name: 'Basic', monthly: 15000, isWage: true }, { code: 'HRA', name: 'House Rent Allowance', monthly: 5000, isWage: false },
       { code: 'LTA', name: 'Leave & Travel Allowance', monthly: 3000, isWage: true }, { code: 'SPECIAL', name: 'Special Allowance', monthly: 7000, isWage: true },
     ] }, 0, from);
     await db.update(schema.employees).set({ pfOptOut: false, ptExempt: false }).where(eq(schema.employees.id, j.id));
-    await db.insert(schema.auditLog).values({ companyId: j.companyId, userId: admin?.id ?? null, action: 'data_fix_salary_30k', entity: 'employee', entityId: j.id, after: { monthlyGross: 30000, hra: 5000, effectiveFrom: from } });
+    await db.insert(schema.auditLog).values({ companyId: j.companyId, userId: admin?.id ?? null, action: 'data_fix_salary_30k_from_oct', entity: 'employee', entityId: j.id, after: { monthlyGross: 30000, hra: 5000, effectiveFrom: from } });
     console.log(`Salary set for ${j.firstName} ${j.lastName}: 30,000 from ${from}`);
   }
 })().catch((e) => console.warn('Default password update skipped:', (e as Error).message));

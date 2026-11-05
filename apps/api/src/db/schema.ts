@@ -93,6 +93,7 @@ export const employees = pgTable('employee', {
   aadhaarLast4: str('aadhaar_last4'), uan: str('uan'), esiIp: str('esi_ip'),
   pfOptOut: boolean('pf_opt_out').notNull().default(false),
   ptExempt: boolean('pt_exempt').notNull().default(false),
+  pfFixed: money('pf_fixed'), // admin-chosen PF per month; null = 12% of the PF wage
   international: boolean('international').notNull().default(false),
   taxRegime: str('tax_regime').notNull().default('new'),
   metro: boolean('metro').notNull().default(false),

@@ -31,11 +31,11 @@ function EditModal({ e, open, onClose }: { e: any; open: boolean; onClose: () =>
   const m = useMasters();
   const { can } = useAuth();
   const [v, setV] = useState<any>({});
-  useEffect(() => { if (open) setV({ firstName: e.firstName, lastName: e.lastName, mobile: e.mobile ?? '', departmentId: e.departmentId ?? '', designationId: e.designationId ?? '', branchId: e.branchId ?? '', taxRegime: e.taxRegime, metro: e.metro, uan: e.uan ?? '', dob: e.dob ?? '', employmentType: e.employmentType, pfDeduct: !e.pfOptOut, ptDeduct: !e.ptExempt }); }, [open, e]);
+  useEffect(() => { if (open) setV({ firstName: e.firstName, lastName: e.lastName, mobile: e.mobile ?? '', departmentId: e.departmentId ?? '', designationId: e.designationId ?? '', branchId: e.branchId ?? '', taxRegime: e.taxRegime, metro: e.metro, uan: e.uan ?? '', dob: e.dob ?? '', employmentType: e.employmentType, pfDeduct: !e.pfOptOut, ptDeduct: !e.ptExempt, pfFixed: e.pfFixed != null ? String(e.pfFixed) : '' }); }, [open, e]);
   const admin = can('COMPANY_ADMIN');
-  const pay = { taxRegime: v.taxRegime, metro: v.metro, uan: v.uan || null, pfOptOut: !v.pfDeduct, ptExempt: !v.ptDeduct };
+  const pay = { taxRegime: v.taxRegime, metro: v.metro, uan: v.uan || null, pfOptOut: !v.pfDeduct, ptExempt: !v.ptDeduct, pfFixed: v.pfFixed === '' || v.pfFixed == null ? null : Number(v.pfFixed) };
   const act = useAct(() => {
-    const { pfDeduct: _p, ptDeduct: _t, ...rest } = v;
+    const { pfDeduct: _p, ptDeduct: _t, pfFixed: _f, ...rest } = v;
     return put(`/employees/${e.id}`, admin ? { ...rest, ...pay, departmentId: v.departmentId || null, designationId: v.designationId || null, branchId: v.branchId || null, mobile: v.mobile || null, dob: v.dob || null } : pay);
   }, { success: 'Saved', invalidate: [['employee', e.id], ['employees']], onDone: onClose });
   const s = (k: string) => ({ value: v[k] ?? '', onChange: (x: any) => setV({ ...v, [k]: x.target.value }) });
@@ -58,6 +58,9 @@ function EditModal({ e, open, onClose }: { e: any; open: boolean; onClose: () =>
       <div className="mt-4 flex flex-wrap gap-6 rounded-xl bg-surface-2/60 p-3">
         <Switch checked={!!v.pfDeduct} onChange={(x) => setV({ ...v, pfDeduct: x })} label="Deduct PF" />
         <Switch checked={!!v.ptDeduct} onChange={(x) => setV({ ...v, ptDeduct: x })} label="Deduct professional tax" />
+        {v.pfDeduct && <Field label="PF per month (₹)" hint="Leave blank for the normal 12% of PF wage (max ₹3,000). A number here is cut every month; the employer pays the same." className="w-full">
+          <Input inputMode="numeric" value={v.pfFixed ?? ''} onChange={(x) => setV({ ...v, pfFixed: x.target.value.replace(/\D/g, '') })} placeholder="Auto (12%)" />
+        </Field>}
       </div>
       {v.employmentType === 'intern' && <p className="mt-2 text-xs text-muted">Interns are paid a stipend only — no PF, PT or TDS.</p>}
       {!admin && <p className="mt-3 text-xs text-muted">Payroll Managers can edit pay fields only.</p>}
@@ -80,6 +83,9 @@ function ReviseModal({ e, open, onClose }: { e: any; open: boolean; onClose: () 
   const { data: preview, error } = useQuery<any>({ queryKey: ['ctc-preview', body, e.metro, e.state, e.gender], queryFn: () => post('/ctc/preview', { ...body, metro: !!e.metro, state: e.state ?? 'MH', gender: e.gender === 'F' ? 'F' : 'M' }), enabled: custom ? dparts.length > 0 && dparts.reduce((a, c) => a + c.monthly, 0) >= 1000 : dctc >= 1000 });
   const act = useAct(() => post(`/employees/${e.id}/salary-revisions`, custom ? { components, effectiveFrom: eff } : { monthlyGross: Number(ctc), effectiveFrom: eff }), { success: 'Salary revised', invalidate: [['structures', e.id], ['dashboard']], onDone: onClose });
   const intern = e.employmentType === 'intern';
+  const { data: structs } = useQuery<any[]>({ queryKey: ['structures', e.id], queryFn: () => get(`/employees/${e.id}/salary-structures`), enabled: open });
+  const latest = structs?.[0]?.effectiveFrom as string | undefined;
+  const replaces = latest && eff < latest ? structs!.filter((x) => x.effectiveFrom >= eff) : [];
   const startCustom = () => {
     const g = Number(ctc) || 0, lta = Math.round(g * 0.1);
     setParts({ BASIC: String(Math.round(g * 0.5)), HRA: String(Math.round(g * 0.25)), LTA: String(lta), SPECIAL: String(g - Math.round(g * 0.5) - Math.round(g * 0.25) - lta) });
@@ -91,6 +97,8 @@ function ReviseModal({ e, open, onClose }: { e: any; open: boolean; onClose: () 
         <Field label={intern ? 'Monthly stipend (₹)' : 'New monthly gross (₹)'} hint={intern ? 'Interns get a stipend only — no breakup' : 'Split: Basic 50% · HRA 25% · LTA 10% · Special 15%'}><Input inputMode="numeric" autoFocus value={ctc} onChange={(x) => setCtc(x.target.value.replace(/\D/g, ''))} placeholder="e.g. 30000" /></Field>
         <Field label="Effective from" hint="Backdated revisions create arrears in the next payroll run"><Input type="date" value={eff} onChange={(x) => setEff(x.target.value)} /></Field>
       </div>
+      {replaces.length > 0 && <p className="-mt-2 mb-4 rounded-xl bg-warn/10 px-3 py-2 text-sm text-warn">This salary starts before the current one and replaces {replaces.length === 1 ? `the salary from ${date(replaces[0].effectiveFrom)}` : `${replaces.length} later salaries`}. Recalculate any open payroll month afterwards.</p>}
+      {latest && eff === latest && <p className="-mt-2 mb-4 rounded-xl bg-surface-2 px-3 py-2 text-sm text-muted">Same start date as the current salary — saving corrects it.</p>}
       {!intern && <div className="mb-5">
         <Switch checked={custom} onChange={(x) => (x ? startCustom() : setCustom(false))} label="Set the components myself (e.g. lower HRA so PF is ₹3,000)" />
         {custom && <div className="mt-3 grid gap-3 sm:grid-cols-4">
@@ -258,7 +266,7 @@ export default function EmployeeDetail() {
               <Card><CardTitle>Personal</CardTitle><div className="divide-y divide-line/70"><Row l="Date of birth" v={date(e.dob)} /><Row l="Gender" v={{ M: 'Male', F: 'Female', O: 'Other' }[e.gender as string]} /><Row l="Personal email" v={e.personalEmail} /><Row l="Marital status" v={e.maritalStatus} /></div></Card>
               <Card><CardTitle sub="Encrypted at rest; masked by default">Statutory & bank</CardTitle><div className="divide-y divide-line/70">
                 <Row l="PAN" v={<span className="font-mono">{e.pan ?? 'Missing'}</span>} /><Row l="Bank account" v={<span className="font-mono">{e.bank ?? 'Missing'}</span>} /><Row l="Aadhaar" v={<span className="font-mono">{e.aadhaar}</span>} />
-                <Row l="UAN" v={e.uan} /><Row l="PF / PT" v={e.employmentType === 'intern' ? 'Not deducted (intern)' : `${e.pfOptOut ? 'No PF' : 'PF'} · ${e.ptExempt ? 'No PT' : 'PT'}`} /><Row l="Tax regime" v={<Badge tone="brand">{e.taxRegime}</Badge>} /><Row l="HRA city" v={e.metro ? 'Metro' : 'Non-metro'} /></div>
+                <Row l="UAN" v={e.uan} /><Row l="PF / PT" v={e.employmentType === 'intern' ? 'Not deducted (intern)' : `${e.pfOptOut ? 'No PF' : e.pfFixed != null ? `PF ₹${Number(e.pfFixed).toLocaleString('en-IN')} fixed` : 'PF 12%'} · ${e.ptExempt ? 'No PT' : 'PT'}`} /><Row l="Tax regime" v={<Badge tone="brand">{e.taxRegime}</Badge>} /><Row l="HRA city" v={e.metro ? 'Metro' : 'Non-metro'} /></div>
                 <Sensitive id={id} /></Card>
             </> : <Card className="lg:col-span-2"><EmptyState icon={<ShieldAlert className="h-7 w-7" />} title="Pay details are private" sub="Only HR, payroll and the employee can see salary, PAN and bank details." /></Card>}
           </Stagger>)}

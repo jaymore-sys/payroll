@@ -53,6 +53,12 @@ describe('computePayslip (spec §10.2)', () => {
     expect(Math.abs(yb - (b.tax.worksheet.find((l) => l.label === 'Gross salary')!.amount))).toBeLessThanOrEqual(12); // component rounding
     expect(b.tax.yearly.map((y) => y.name)).toEqual(expect.arrayContaining(['Bonus', 'Arrear', 'Other earnings']));
   });
+  it('PF fixed by the admin is cut as set; employer matches', () => {
+    const p = computePayslip(base({ employee: { ...emp, pfFixed: 1800 } }), SR, TR);
+    expect(p.deductions.pf).toBe(1800);
+    expect(p.employer.pf).toBe(1800);
+    expect(p.employer.eps + p.employer.epf).toBe(1800);
+  });
   it('February professional tax is ₹300', () => {
     expect(computePayslip(base({ month: '2027-02' }), SR, TR).deductions.pt).toBe(300);
     expect(computePayslip(base({ month: '2027-01' }), SR, TR).deductions.pt).toBe(200);

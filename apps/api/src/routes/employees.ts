@@ -1,5 +1,5 @@
 import { splitCtc, upfrontProration } from '@payrollpro/engines';
-import { aliasedTable, and, asc, desc, eq, like, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { aliasedTable, and, asc, desc, eq, gte, like, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { Router } from 'express';
 import { z } from 'zod';
 import { db, insertReturning, schema, updateReturning } from '../db';
@@ -35,12 +35,12 @@ const payFields = {
   aadhaar: z.string().regex(/^\d{12}$/, 'Aadhaar must be 12 digits').nullish(),
   uan: z.string().regex(/^\d{12}$/, 'UAN must be 12 digits').nullish().or(z.literal('').transform(() => null)),
   esiIp: z.string().regex(/^\d{10}$/, 'ESI IP must be 10 digits').nullish().or(z.literal('').transform(() => null)),
-  pfOptOut: z.boolean(), ptExempt: z.boolean(), international: z.boolean(), taxRegime: z.enum(['new', 'old']), metro: z.boolean(),
+  pfOptOut: z.boolean(), ptExempt: z.boolean(), pfFixed: z.number().min(0).max(1e6).nullable(), international: z.boolean(), taxRegime: z.enum(['new', 'old']), metro: z.boolean(),
 };
 /** Exact monthly salary components (e.g. copied from RazorpayX's Master CTC Report). */
 const componentsSchema = z.array(z.object({ code: z.string().regex(/^[A-Z0-9_]{2,20}$/), name: z.string().min(1).max(60), monthly: z.number().min(0).max(1e8), isWage: z.boolean() })).min(1).max(20);
 const createSchema = z.object({ ...personal, ...payFields, code: z.string().regex(/^[A-Z0-9-]{2,20}$/).optional(), createLogin: z.boolean().default(true), annualCtc: z.number().positive().max(1e9).optional(), monthlyGross: z.number().positive().max(1e8).optional(), components: componentsSchema.optional() })
-  .partial({ pfOptOut: true, ptExempt: true, international: true, taxRegime: true, metro: true, noticeDays: true, employmentType: true });
+  .partial({ pfOptOut: true, ptExempt: true, pfFixed: true, international: true, taxRegime: true, metro: true, noticeDays: true, employmentType: true });
 
 /** Encrypt sensitive inputs; only last-4 is kept in clear for masked display. Full Aadhaar is never stored. */
 function sensitiveColumns(d: { pan?: string | null; bank?: z.infer<typeof bankSchema> | null; aadhaar?: string | null }) {
@@ -72,7 +72,7 @@ function view(r: { row: typeof E.$inferSelect } & Record<string, unknown>, showP
   return {
     ...base, dob: row.dob, personalEmail: row.personalEmail, maritalStatus: row.maritalStatus, probationEnd: row.probationEnd, noticeDays: row.noticeDays,
     pan: row.panEnc ? decrypt(row.panEnc) : null, bank: mask(row.bankLast4), aadhaar: mask(row.aadhaarLast4), uan: row.uan, esiIp: row.esiIp,
-    pfOptOut: row.pfOptOut, ptExempt: row.ptExempt, international: row.international, taxRegime: row.taxRegime, metro: row.metro,
+    pfOptOut: row.pfOptOut, ptExempt: row.ptExempt, pfFixed: row.pfFixed != null ? Number(row.pfFixed) : null, international: row.international, taxRegime: row.taxRegime, metro: row.metro,
     lastWorkingDay: row.lastWorkingDay, exitReason: row.exitReason,
   };
 }
@@ -200,7 +200,7 @@ export async function createRevision(req: any, empId: string, pay: { annualCtc?:
   // PF/ESI shown with today's rules for an old joining date (payroll itself always uses the payroll month's rules).
   const asOf = [effectiveFrom.slice(0, 7), new Date().toISOString().slice(0, 7)].sort()[1];
   const preview = splitCtc({ annualCtc: pay.annualCtc ?? 0, monthlyGross, annualVariable, metro, state, pfCapMode: company.pfCapMode as 'capped' | 'actual', gender: e.gender === 'F' ? 'F' : 'M', age, doj: e.doj, asOf, labourCodeMode: company.labourCodeMode,
-    template, pfOptOut: e.pfOptOut || intern, ptExempt: e.ptExempt || intern, internationalWorker: e.international, esiExempt: !company.esiEnabled || intern }, stat, tax);
+    template, pfOptOut: e.pfOptOut || intern, pfFixed: e.pfFixed != null ? Number(e.pfFixed) : null, ptExempt: e.ptExempt || intern, internationalWorker: e.international, esiExempt: !company.esiEnabled || intern }, stat, tax);
   if (intern) Object.assign(preview, { intern: true });
   const annualCtc = preview.checkCtc;
   return db.transaction(async (tx) => {
@@ -213,8 +213,13 @@ export async function createRevision(req: any, empId: string, pay: { annualCtc?:
       const [row] = await updateReturning(S, values, eq(S.id, prev.id), tx);
       return { row, prev };
     }
-    if (prev && prev.effectiveFrom > effectiveFrom) throw new ApiError(409, 'overlap', `The current salary starts on ${prev.effectiveFrom.split('-').reverse().join('-')}. Choose that date (to correct it) or a later one.`);
-    if (prev) await tx.update(S).set({ effectiveTo: dayBefore }).where(eq(S.id, prev.id));
+    // Earlier date (e.g. last month): this salary replaces every revision that starts on or after it.
+    let before = prev;
+    if (prev && prev.effectiveFrom > effectiveFrom) {
+      await tx.delete(S).where(and(eq(S.companyId, cid), eq(S.employeeId, empId), gte(S.effectiveFrom, effectiveFrom)));
+      [before] = await tx.select().from(S).where(and(eq(S.companyId, cid), eq(S.employeeId, empId))).orderBy(desc(S.effectiveFrom)).limit(1);
+    }
+    if (before) await tx.update(S).set({ effectiveTo: dayBefore }).where(eq(S.id, before.id));
     const [row] = await insertReturning(S, { ...values, companyId: cid, employeeId: empId, effectiveFrom, createdBy: req.user.sub }, tx);
     return { row, prev };
   }).then(async ({ row, prev }) => {
@@ -234,8 +239,8 @@ employeesRouter.post('/employees', requireRole('COMPANY_ADMIN'), h(async (req, r
     if (taken && (taken.employeeId || taken.companyId !== cid)) throw new ApiError(409, 'email_taken', `${d.workEmail} is already the login of another person — use a different work email`);
   }
   const code = d.code ?? (await nextCode(cid));
-  const { pan, bank, aadhaar, createLogin, annualCtc, monthlyGross, components, code: _c, ...rest } = d;
-  const [row] = await insertReturning(E, { ...rest, code, companyId: cid, createdBy: req.user!.sub, ...sensitiveColumns({ pan, bank, aadhaar }) } as typeof E.$inferInsert);
+  const { pan, bank, aadhaar, createLogin, annualCtc, monthlyGross, components, code: _c, pfFixed, ...rest } = d;
+  const [row] = await insertReturning(E, { ...rest, ...(pfFixed != null ? { pfFixed: String(pfFixed) } : {}), code, companyId: cid, createdBy: req.user!.sub, ...sensitiveColumns({ pan, bank, aadhaar }) } as typeof E.$inferInsert);
   await creditJoinerLeave(cid, row.id, row.doj, row.gender, req.user!.sub);
   let tempPassword: string | undefined;
   if (createLogin && (await ensureLogin(cid, row.id, row.workEmail)) === 'created') tempPassword = DEFAULT_PASSWORD;
@@ -244,7 +249,7 @@ employeesRouter.post('/employees', requireRole('COMPANY_ADMIN'), h(async (req, r
   res.status(201).json({ id: row.id, code: row.code, tempPassword });
 }));
 
-const PAY_ONLY = ['pan', 'bank', 'aadhaar', 'uan', 'esiIp', 'pfOptOut', 'ptExempt', 'international', 'taxRegime', 'metro'] as const;
+const PAY_ONLY = ['pan', 'bank', 'aadhaar', 'uan', 'esiIp', 'pfOptOut', 'ptExempt', 'pfFixed', 'international', 'taxRegime', 'metro'] as const;
 employeesRouter.put('/employees/:id', requireRole('COMPANY_ADMIN', 'PAYROLL_MANAGER'), h(async (req, res) => {
   const cid = req.user!.cid;
   let d = parse(z.object({ ...personal, ...payFields, status: z.enum(['DRAFT', 'ONBOARDING', 'ACTIVE', 'NOTICE', 'EXITED', 'SETTLED']) }).partial(), req.body);
@@ -253,8 +258,8 @@ employeesRouter.put('/employees/:id', requireRole('COMPANY_ADMIN', 'PAYROLL_MANA
   await assertRefs(cid, d, req.params.id);
   const [before] = await db.select().from(E).where(and(eq(E.companyId, cid), eq(E.id, req.params.id)));
   if (!before) throw notFound('Employee');
-  const { pan, bank, aadhaar, ...rest } = d;
-  const [after] = await updateReturning(E, { ...rest, ...sensitiveColumns({ pan, bank, aadhaar }) } as any, eq(E.id, before.id));
+  const { pan, bank, aadhaar, pfFixed, ...rest } = d;
+  const [after] = await updateReturning(E, { ...rest, ...(pfFixed !== undefined ? { pfFixed: pfFixed === null ? null : String(pfFixed) } : {}), ...sensitiveColumns({ pan, bank, aadhaar }) } as any, eq(E.id, before.id));
   // Joining date corrected: the first salary starts on the new date, otherwise the employee drops out of payroll for those months.
   if (d.doj && d.doj !== before.doj) {
     const [first] = await db.select().from(S).where(eq(S.employeeId, before.id)).orderBy(asc(S.effectiveFrom)).limit(1);
