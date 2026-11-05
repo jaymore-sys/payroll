@@ -68,16 +68,36 @@ function EditModal({ e, open, onClose }: { e: any; open: boolean; onClose: () =>
 function ReviseModal({ e, open, onClose }: { e: any; open: boolean; onClose: () => void }) {
   const [ctc, setCtc] = useState('');
   const [eff, setEff] = useState(today());
+  // Own split: type each component (e.g. HRA 5,000 so PF wage reaches ₹25,000 and PF is ₹3,000).
+  const [custom, setCustom] = useState(false);
+  const [parts, setParts] = useState<Record<string, string>>({ BASIC: '', HRA: '', LTA: '', SPECIAL: '' });
+  const NAMES: [string, string, boolean][] = [['BASIC', 'Basic', true], ['HRA', 'House Rent Allowance', false], ['LTA', 'Leave & Travel Allowance', true], ['SPECIAL', 'Special Allowance', true]];
+  const components = NAMES.map(([code, name, isWage]) => ({ code, name, isWage, monthly: Number(parts[code]) || 0 })).filter((c) => c.monthly > 0);
+  const partsTotal = components.reduce((a, c) => a + c.monthly, 0);
   const dctc = useDebounced(Number(ctc), 400);
-  const { data: preview, error } = useQuery<any>({ queryKey: ['ctc-preview', dctc, e.metro, e.state, e.gender], queryFn: () => post('/ctc/preview', { monthlyGross: dctc, metro: !!e.metro, state: e.state ?? 'MH', gender: e.gender === 'F' ? 'F' : 'M' }), enabled: dctc >= 1000 });
-  const act = useAct(() => post(`/employees/${e.id}/salary-revisions`, { monthlyGross: Number(ctc), effectiveFrom: eff }), { success: 'Salary revised', invalidate: [['structures', e.id], ['dashboard']], onDone: onClose });
+  const dparts = JSON.parse(useDebounced(JSON.stringify(components), 400)) as typeof components; // string = stable while typing
+  const body = custom ? { components: dparts } : { monthlyGross: dctc };
+  const { data: preview, error } = useQuery<any>({ queryKey: ['ctc-preview', body, e.metro, e.state, e.gender], queryFn: () => post('/ctc/preview', { ...body, metro: !!e.metro, state: e.state ?? 'MH', gender: e.gender === 'F' ? 'F' : 'M' }), enabled: custom ? dparts.length > 0 && dparts.reduce((a, c) => a + c.monthly, 0) >= 1000 : dctc >= 1000 });
+  const act = useAct(() => post(`/employees/${e.id}/salary-revisions`, custom ? { components, effectiveFrom: eff } : { monthlyGross: Number(ctc), effectiveFrom: eff }), { success: 'Salary revised', invalidate: [['structures', e.id], ['dashboard']], onDone: onClose });
   const intern = e.employmentType === 'intern';
+  const startCustom = () => {
+    const g = Number(ctc) || 0, lta = Math.round(g * 0.1);
+    setParts({ BASIC: String(Math.round(g * 0.5)), HRA: String(Math.round(g * 0.25)), LTA: String(lta), SPECIAL: String(g - Math.round(g * 0.5) - Math.round(g * 0.25) - lta) });
+    setCustom(true);
+  };
   return (
-    <Modal open={open} onClose={onClose} title="Revise salary" wide footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button disabled={!preview} loading={act.isPending} onClick={() => act.mutate()}>Save revision</Button></>}>
+    <Modal open={open} onClose={onClose} title="Revise salary" wide footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button disabled={!preview || (custom && !components.length)} loading={act.isPending} onClick={() => act.mutate()}>Save revision</Button></>}>
       <div className="mb-5 grid gap-4 sm:grid-cols-2">
         <Field label={intern ? 'Monthly stipend (₹)' : 'New monthly gross (₹)'} hint={intern ? 'Interns get a stipend only — no breakup' : 'Split: Basic 50% · HRA 25% · LTA 10% · Special 15%'}><Input inputMode="numeric" autoFocus value={ctc} onChange={(x) => setCtc(x.target.value.replace(/\D/g, ''))} placeholder="e.g. 30000" /></Field>
         <Field label="Effective from" hint="Backdated revisions create arrears in the next payroll run"><Input type="date" value={eff} onChange={(x) => setEff(x.target.value)} /></Field>
       </div>
+      {!intern && <div className="mb-5">
+        <Switch checked={custom} onChange={(x) => (x ? startCustom() : setCustom(false))} label="Set the components myself (e.g. lower HRA so PF is ₹3,000)" />
+        {custom && <div className="mt-3 grid gap-3 sm:grid-cols-4">
+          {NAMES.map(([code, name]) => <Field key={code} label={`${name} (₹)`}><Input inputMode="numeric" value={parts[code]} onChange={(x) => setParts({ ...parts, [code]: x.target.value.replace(/\D/g, '') })} /></Field>)}
+          <p className="text-xs text-muted sm:col-span-4">Gross {partsTotal.toLocaleString('en-IN')} · PF = 12% of everything except HRA, up to ₹25,000 → ₹{Math.round(Math.min(partsTotal - (Number(parts.HRA) || 0), 25000) * 0.12).toLocaleString('en-IN')}</p>
+        </div>}
+      </div>}
       {error ? <p className="text-sm text-bad">{(error as Error).message}</p> : preview ? <Breakup p={preview} intern={intern} compact /> : <p className="py-8 text-center text-sm text-muted">Enter the monthly gross to see the breakup</p>}
     </Modal>
   );

@@ -26,6 +26,17 @@ beforeAll(async () => {
 });
 afterAll(() => closeDb());
 
+describe('salary with my own split', () => {
+  it('lower HRA lifts the PF wage to the ₹25,000 cap: PF 3,000 on a 30,000 gross', async () => {
+    const components = [{ code: 'BASIC', name: 'Basic', monthly: 15000, isWage: true }, { code: 'HRA', name: 'House Rent Allowance', monthly: 5000, isWage: false }, { code: 'LTA', name: 'Leave & Travel Allowance', monthly: 3000, isWage: true }, { code: 'SPECIAL', name: 'Special Allowance', monthly: 7000, isWage: true }];
+    const p = await as('payroll').post('/ctc/preview', { components });
+    expect(p.status).toBe(200);
+    expect(p.body.monthlyGross).toBe(30000);
+    expect(p.body.employee.pf).toBe(3000);
+    expect(p.body.employee.pt).toBe(200);
+  });
+});
+
 describe('payroll run → Excel', () => {
   let runId = '', heldName = '';
   it('creates a run with every employee who has a salary', async () => {

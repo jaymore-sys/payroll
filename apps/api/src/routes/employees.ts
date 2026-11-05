@@ -348,14 +348,16 @@ employeesRouter.post('/employees/import', requireRole('COMPANY_ADMIN'), h(async 
 }));
 
 /* ---------------- salary ---------------- */
-const ctcInput = z.object({ annualCtc: z.number().min(0).max(1e9).default(0), monthlyGross: z.number().positive().max(1e8).optional(), annualVariable: z.number().min(0).max(1e9).default(0), metro: z.boolean().default(true), state: z.string().regex(/^[A-Z]{2}$/).default('MH'), gender: z.enum(['M', 'F']).default('M'), age: z.number().int().min(14).max(100).default(30), pfCapMode: z.enum(['capped', 'actual']).optional() })
-  .refine((d) => d.monthlyGross || d.annualCtc > 0, 'Enter the monthly gross or annual CTC');
+const ctcInput = z.object({ annualCtc: z.number().min(0).max(1e9).default(0), monthlyGross: z.number().positive().max(1e8).optional(), annualVariable: z.number().min(0).max(1e9).default(0), metro: z.boolean().default(true), state: z.string().regex(/^[A-Z]{2}$/).default('MH'), gender: z.enum(['M', 'F']).default('M'), age: z.number().int().min(14).max(100).default(30), pfCapMode: z.enum(['capped', 'actual']).optional(), components: componentsSchema.optional() })
+  .refine((d) => d.monthlyGross || d.annualCtc > 0 || d.components, 'Enter the monthly gross or annual CTC');
 employeesRouter.post('/ctc/preview', requireRole('COMPANY_ADMIN', 'PAYROLL_MANAGER'), h(async (req, res) => {
   const d = parse(ctcInput, req.body);
   const [c] = await db.select().from(schema.companies).where(eq(schema.companies.id, req.user!.cid));
   const { stat, tax } = await loadRules();
   try {
-    res.json(splitCtc({ ...d, pfCapMode: d.pfCapMode ?? (c.pfCapMode as 'capped' | 'actual'), labourCodeMode: c.labourCodeMode, esiExempt: !c.esiEnabled, asOf: new Date().toISOString().slice(0, 7) }, stat, tax));
+    const { components, ...rest } = d;
+    const template = components?.map((c) => ({ code: c.code, name: c.name, calc: 'fixed' as const, value: c.monthly, isWage: c.isWage, taxable: c.code === 'HRA' ? 'partial' as const : 'full' as const }));
+    res.json(splitCtc({ ...rest, ...(template ? { template, monthlyGross: components!.reduce((a, c) => a + c.monthly, 0) } : {}), pfCapMode: rest.pfCapMode ?? (c.pfCapMode as 'capped' | 'actual'), labourCodeMode: c.labourCodeMode, esiExempt: !c.esiEnabled, asOf: new Date().toISOString().slice(0, 7) }, stat, tax));
   } catch (e) { throw new ApiError(422, 'ctc_invalid', (e as Error).message); }
 }));
 
