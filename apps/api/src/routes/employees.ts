@@ -206,12 +206,16 @@ export async function createRevision(req: any, empId: string, pay: { annualCtc?:
   return db.transaction(async (tx) => {
     const dayBefore = new Date(new Date(effectiveFrom).getTime() - 864e5).toISOString().slice(0, 10);
     const [prev] = await tx.select().from(S).where(and(eq(S.companyId, cid), eq(S.employeeId, empId), isNull(S.effectiveTo))).orderBy(desc(S.effectiveFrom)).limit(1);
-    if (prev && prev.effectiveFrom >= effectiveFrom) throw new ApiError(409, 'overlap', 'A revision on or after this date already exists');
+    const values = { annualCtc: String(annualCtc), annualVariable: String(annualVariable), monthlyGross: String(preview.monthlyGross),
+      employerCost: String(preview.employer.monthlyTotal), deemedWages: String(preview.deemedWages), pfCapMode: company.pfCapMode, breakup: preview };
+    // Same start date as the current salary: correct it in place (e.g. saved once, then changed the split).
+    if (prev && prev.effectiveFrom === effectiveFrom) {
+      const [row] = await updateReturning(S, values, eq(S.id, prev.id), tx);
+      return { row, prev };
+    }
+    if (prev && prev.effectiveFrom > effectiveFrom) throw new ApiError(409, 'overlap', `The current salary starts on ${prev.effectiveFrom.split('-').reverse().join('-')}. Choose that date (to correct it) or a later one.`);
     if (prev) await tx.update(S).set({ effectiveTo: dayBefore }).where(eq(S.id, prev.id));
-    const [row] = await insertReturning(S, {
-      companyId: cid, employeeId: empId, annualCtc: String(annualCtc), annualVariable: String(annualVariable), monthlyGross: String(preview.monthlyGross),
-      employerCost: String(preview.employer.monthlyTotal), deemedWages: String(preview.deemedWages), pfCapMode: company.pfCapMode, effectiveFrom, breakup: preview, createdBy: req.user.sub,
-    }, tx);
+    const [row] = await insertReturning(S, { ...values, companyId: cid, employeeId: empId, effectiveFrom, createdBy: req.user.sub }, tx);
     return { row, prev };
   }).then(async ({ row, prev }) => {
     // Audit after commit, outside the transaction.

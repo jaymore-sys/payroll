@@ -35,6 +35,18 @@ describe('salary with my own split', () => {
     expect(p.body.employee.pf).toBe(3000);
     expect(p.body.employee.pt).toBe(200);
   });
+  it('saving a salary again on the same start date corrects it instead of failing', async () => {
+    const emp = (await as('admin').get('/employees?limit=1')).body.items[0];
+    const first = await as('admin').post(`/employees/${emp.id}/salary-revisions`, { monthlyGross: 30000, effectiveFrom: '2026-12-01' });
+    expect(first.status).toBe(201);
+    const again = await as('admin').post(`/employees/${emp.id}/salary-revisions`, { components: [{ code: 'BASIC', name: 'Basic', monthly: 15000, isWage: true }, { code: 'HRA', name: 'House Rent Allowance', monthly: 5000, isWage: false }, { code: 'LTA', name: 'Leave & Travel Allowance', monthly: 3000, isWage: true }, { code: 'SPECIAL', name: 'Special Allowance', monthly: 7000, isWage: true }], effectiveFrom: '2026-12-01' });
+    expect(again.status).toBe(201);
+    expect(again.body.id).toBe(first.body.id);
+    expect(again.body.breakup.employee.pf).toBe(3000);
+    const earlier = await as('admin').post(`/employees/${emp.id}/salary-revisions`, { monthlyGross: 30000, effectiveFrom: '2026-11-01' });
+    expect(earlier.status).toBe(409);
+    expect(earlier.body.message).toMatch(/01-12-2026/);
+  });
 });
 
 describe('payroll run → Excel', () => {
